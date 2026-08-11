@@ -26,7 +26,6 @@ jobs:
       run: |
         pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
         pip install indic-asr-onnx pyaudio
-        pip install --upgrade pip
 
     - name: Patch fairseq/dataclass/configs.py to fix 'help' error
       run: |
