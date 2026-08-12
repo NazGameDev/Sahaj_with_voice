@@ -57,20 +57,19 @@ jobs:
         @"
         import os
         import shutil
-        from pathlib import Path
         from indic_asr_onnx import IndicTranscriber
 
-        # Download the model (this will save to ~/.cache/indic-asr-onnx)
+        # Force download of the model
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
-        # Find the actual cache folder
+        # Find the cache folder
         src = os.path.expanduser('~/.cache/indic-asr-onnx')
         if os.path.exists(src) and os.listdir(src):
             shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
             print(f'ASR model copied from {src} to indic_asr_cache')
         else:
-            # Try alternative location: huggingface hub
+            print('Warning: Could not find the cache folder. Trying alternative...')
             alt = os.path.expanduser('~/.cache/huggingface/hub')
             if os.path.exists(alt):
                 for item in os.listdir(alt):
@@ -80,6 +79,8 @@ jobs:
                             shutil.copytree(full_path, 'indic_asr_cache', dirs_exist_ok=True)
                             print(f'ASR model copied from {full_path} to indic_asr_cache')
                             break
+                else:
+                    raise FileNotFoundError('Could not locate the ASR model cache folder.')
             else:
                 raise FileNotFoundError('Could not locate the ASR model cache folder.')
         "@ > download_asr.py
