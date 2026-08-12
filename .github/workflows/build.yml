@@ -45,9 +45,7 @@ jobs:
 
     - name: Download & Copy Extracted AI4Bharat Transliteration Models
       run: |
-        # Force download of the Assamese model
         python -c "from ai4bharat.transliteration import XlitEngine; XlitEngine('as', beam_width=4, rescore=False)"
-        # Copy the model folder (v1.0) to offline_model_cache
         python -c "import os, shutil, ai4bharat; pkg_dir = os.path.dirname(ai4bharat.__file__); v1_dir = os.path.join(pkg_dir, 'transliteration', 'transformer', 'models', 'en2indic', 'v1.0'); os.makedirs('offline_model_cache', exist_ok=True); shutil.copytree(v1_dir, 'offline_model_cache', dirs_exist_ok=True)"
 
     - name: Copy lang_list.txt for bundling
@@ -56,23 +54,44 @@ jobs:
 
     - name: Pre-download and cache the ASR model for voice typing
       run: |
-        # Create a proper Python script to download and copy the ASR model
         @"
         import os
         import shutil
+        from pathlib import Path
         from indic_asr_onnx import IndicTranscriber
 
-        # This will download the model to ~/.cache/indic-asr-onnx
+        # This will download the model to the default cache
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
-        # Copy the cache to a local folder for bundling
-        src = os.path.expanduser('~/.cache/indic-asr-onnx')
-        if os.path.exists(src):
-            shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
-            print('ASR model copied to indic_asr_cache folder.')
-        else:
-            print('Cache folder not found; maybe the model download path is different.')
+        # Find the actual cache location
+        possible_paths = [
+            os.path.expanduser('~/.cache/indic-asr-onnx'),
+            os.path.expanduser('~/.cache/huggingface/hub'),
+        ]
+
+        found = False
+        for cache_dir in possible_paths:
+            if os.path.exists(cache_dir):
+                # Look for a folder containing 'indic' or 'asr' or model name
+                for item in os.listdir(cache_dir):
+                    # Check if any folder seems to be the model
+                    if 'indic' in item.lower() or 'asr' in item.lower() or 'onnx' in item.lower():
+                        full_path = os.path.join(cache_dir, item)
+                        if os.path.isdir(full_path):
+                            # Copy that folder to indic_asr_cache
+                            shutil.copytree(full_path, 'indic_asr_cache', dirs_exist_ok=True)
+                            print(f'ASR model copied from {full_path} to indic_asr_cache')
+                            found = True
+                            break
+                if found:
+                    break
+
+        if not found:
+            # If not found, try to locate by checking the transcriber object's internal path
+            # Some libraries store the model path; we can try to get it via the object
+            # However, we'll fallback to listing all caches
+            raise FileNotFoundError('Could not locate the ASR model cache folder.')
         "@ > download_asr.py
         python download_asr.py
 
@@ -80,7 +99,7 @@ jobs:
       run: |
         dir offline_model_cache
         dir lang_list.txt
-        dir indic_asr_cache
+        if (Test-Path indic_asr_cache) { dir indic_asr_cache } else { Write-Host "indic_asr_cache not found" }
 
     - name: Build Executable via PyInstaller
       run: |
