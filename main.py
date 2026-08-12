@@ -1156,8 +1156,7 @@ class AssameseTypingApp(QMainWindow):
         self.voice_btn.setEnabled(False)
         self.voice_btn.setText("🎤 Recording...")
         
-        # Start recording in a separate thread to keep UI responsive
-        import threading
+        # Use a QThread for recording to keep UI responsive
         self.recording_thread = threading.Thread(target=self._record_and_transcribe)
         self.recording_thread.daemon = True
         self.recording_thread.start()
@@ -1168,8 +1167,7 @@ class AssameseTypingApp(QMainWindow):
             recorder = voice_typing.VoiceRecorder()
             recorder.start_recording()
             
-            # Record for 5 seconds (you can adjust this)
-            import time
+            # Record for 5 seconds (adjustable)
             time.sleep(5)
             
             audio_file = recorder.stop_recording()
@@ -1185,14 +1183,15 @@ class AssameseTypingApp(QMainWindow):
 
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
-        self.text_area.insertPlainText(text + " ")
-        self.text_area.setFocus()
+        if text and text.strip():
+            self.text_area.insertPlainText(text + " ")
+            self.text_area.setFocus()
+            # Scroll to the end
+            cursor = self.text_area.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.text_area.setTextCursor(cursor)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
-        # Scroll to the end
-        cursor = self.text_area.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.text_area.setTextCursor(cursor)
 
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
