@@ -25,7 +25,7 @@ jobs:
     - name: Install Application Requirements
       run: |
         pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
-        pip install indic-asr-onnx pyaudio
+        pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers
 
     - name: Patch fairseq/dataclass/configs.py to fix 'help' error
       run: |
@@ -56,10 +56,25 @@ jobs:
 
     - name: Pre-download and cache the ASR model for voice typing
       run: |
-        # Force download of the IndicConformer ASR model
-        python -c "from indic_asr_onnx import IndicTranscriber; transcriber = IndicTranscriber(); print('ASR model downloaded successfully.')"
-        # Copy the model from the cache folder to a local folder to bundle with the app
-        python -c "import os, shutil; src = os.path.expanduser('~/.cache/indic-asr-onnx'); if os.path.exists(src): shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True); print('ASR model copied to cache folder.')"
+        # Create a proper Python script to download and copy the ASR model
+        @"
+        import os
+        import shutil
+        from indic_asr_onnx import IndicTranscriber
+
+        # This will download the model to ~/.cache/indic-asr-onnx
+        transcriber = IndicTranscriber()
+        print('ASR model downloaded successfully.')
+
+        # Copy the cache to a local folder for bundling
+        src = os.path.expanduser('~/.cache/indic-asr-onnx')
+        if os.path.exists(src):
+            shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
+            print('ASR model copied to indic_asr_cache folder.')
+        else:
+            print('Cache folder not found; maybe the model download path is different.')
+        "@ > download_asr.py
+        python download_asr.py
 
     - name: List cached files (debugging)
       run: |
