@@ -25,7 +25,7 @@ jobs:
     - name: Install Application Requirements
       run: |
         pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
-        pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers
+        pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers onnxruntime
 
     - name: Patch fairseq/dataclass/configs.py to fix 'help' error
       run: |
@@ -60,38 +60,28 @@ jobs:
         from pathlib import Path
         from indic_asr_onnx import IndicTranscriber
 
-        # This will download the model to the default cache
+        # Download the model (this will save to ~/.cache/indic-asr-onnx)
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
-        # Find the actual cache location
-        possible_paths = [
-            os.path.expanduser('~/.cache/indic-asr-onnx'),
-            os.path.expanduser('~/.cache/huggingface/hub'),
-        ]
-
-        found = False
-        for cache_dir in possible_paths:
-            if os.path.exists(cache_dir):
-                # Look for a folder containing 'indic' or 'asr' or model name
-                for item in os.listdir(cache_dir):
-                    # Check if any folder seems to be the model
+        # Find the actual cache folder
+        src = os.path.expanduser('~/.cache/indic-asr-onnx')
+        if os.path.exists(src) and os.listdir(src):
+            shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
+            print(f'ASR model copied from {src} to indic_asr_cache')
+        else:
+            # Try alternative location: huggingface hub
+            alt = os.path.expanduser('~/.cache/huggingface/hub')
+            if os.path.exists(alt):
+                for item in os.listdir(alt):
                     if 'indic' in item.lower() or 'asr' in item.lower() or 'onnx' in item.lower():
-                        full_path = os.path.join(cache_dir, item)
+                        full_path = os.path.join(alt, item)
                         if os.path.isdir(full_path):
-                            # Copy that folder to indic_asr_cache
                             shutil.copytree(full_path, 'indic_asr_cache', dirs_exist_ok=True)
                             print(f'ASR model copied from {full_path} to indic_asr_cache')
-                            found = True
                             break
-                if found:
-                    break
-
-        if not found:
-            # If not found, try to locate by checking the transcriber object's internal path
-            # Some libraries store the model path; we can try to get it via the object
-            # However, we'll fallback to listing all caches
-            raise FileNotFoundError('Could not locate the ASR model cache folder.')
+            else:
+                raise FileNotFoundError('Could not locate the ASR model cache folder.')
         "@ > download_asr.py
         python download_asr.py
 
@@ -103,7 +93,7 @@ jobs:
 
     - name: Build Executable via PyInstaller
       run: |
-        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy main.py
+        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx main.py
 
     - name: Zip Final Build Folder
       run: |
