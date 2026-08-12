@@ -1165,21 +1165,30 @@ class AssameseTypingApp(QMainWindow):
         """Record audio and then transcribe it (runs in background)."""
         try:
             recorder = voice_typing.VoiceRecorder()
-            recorder.start_recording()
-            
-            # Record for 5 seconds (adjustable)
+            if not recorder.start_recording():
+                self.on_voice_error("Could not access microphone. Please check your microphone settings.")
+                return
+
+            # Record for 5 seconds (adjust as needed)
+            import time
             time.sleep(5)
-            
+
             audio_file = recorder.stop_recording()
-            
+            if not audio_file:
+                self.on_voice_error("Failed to save recorded audio.")
+                return
+
             # Send to transcriber (this is a separate thread)
             self.transcriber_thread = voice_typing.VoiceTypingWorker(audio_file)
             self.transcriber_thread.finished.connect(self.on_voice_transcribed)
             self.transcriber_thread.error.connect(self.on_voice_error)
             self.transcriber_thread.start()
-            
+
         except Exception as e:
-            self.on_voice_error(f"Recording failed: {str(e)}")
+            import traceback
+            error_msg = f"Recording failed: {str(e)}\n\n{traceback.format_exc()}"
+            print(error_msg)
+            self.on_voice_error(error_msg)
 
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
