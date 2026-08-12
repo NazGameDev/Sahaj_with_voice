@@ -3,6 +3,7 @@ import sys
 import tempfile
 import wave
 import threading
+import time
 import pyaudio
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -14,6 +15,14 @@ except ImportError:
     HAS_ASR = False
     print("Voice typing unavailable: 'indic-asr-onnx' not installed.")
 
+# Set cache directory to bundled folder if running from exe
+if getattr(sys, 'frozen', False):
+    base_path = sys._MEIPASS
+    cache_dir = os.path.join(base_path, 'indic_asr_cache')
+    if os.path.exists(cache_dir):
+        os.environ['INDIC_ASR_CACHE'] = cache_dir
+        print(f"Using bundled ASR cache: {cache_dir}")
+
 
 class VoiceRecorder:
     """Handles recording audio from the microphone."""
@@ -24,7 +33,7 @@ class VoiceRecorder:
         self.is_recording = False
 
     def start_recording(self):
-        """Starts recording audio in a background thread."""
+        """Starts recording audio."""
         self.frames = []
         self.is_recording = True
         self.stream = self.audio.open(
@@ -38,20 +47,18 @@ class VoiceRecorder:
         self.stream.start_stream()
 
     def _callback(self, in_data, frame_count, time_info, status):
-        """Callback function for PyAudio stream."""
         if self.is_recording:
             self.frames.append(in_data)
         return (in_data, pyaudio.paContinue)
 
     def stop_recording(self):
-        """Stops recording and saves audio to a temporary WAV file."""
+        """Stops recording and returns path to saved WAV file."""
         self.is_recording = False
         if self.stream:
             self.stream.stop_stream()
             self.stream.close()
         self.audio.terminate()
 
-        # Save recorded audio to a temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         temp_filename = temp_file.name
         with wave.open(temp_filename, 'wb') as wf:
@@ -77,13 +84,12 @@ class VoiceTypingWorker(QThread):
             return
 
         try:
-            # Initialize the transcriber (downloads model on first use)
+            # Initialize the transcriber
             transcriber = IndicTranscriber()
             # Transcribe the audio file
-            # The language code for Assamese is 'as'
             transcribed_text = transcriber.transcribe_rnnt(self.audio_filepath, "as")
             
-            # Clean up the temporary file
+            # Clean up temp file
             try:
                 os.remove(self.audio_filepath)
             except:
@@ -95,4 +101,7 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Could not understand the audio. Please try again.")
 
         except Exception as e:
-            self.error.emit(f"An error occurred during transcription: {str(e)}")
+            import traceback
+            error_msg = f"Transcription error: {str(e)}\n\n{traceback.format_exc()}"
+            print(error_msg)
+            self.error.emit(error_msg)
