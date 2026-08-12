@@ -83,6 +83,12 @@ jobs:
                     raise FileNotFoundError('Could not locate the ASR model cache folder.')
             else:
                 raise FileNotFoundError('Could not locate the ASR model cache folder.')
+
+        # Verify that the cache was created
+        if not os.path.exists('indic_asr_cache') or not os.listdir('indic_asr_cache'):
+            raise RuntimeError('Failed to create indic_asr_cache or it is empty.')
+        else:
+            print('indic_asr_cache is ready.')
         "@ > download_asr.py
         python download_asr.py
 
