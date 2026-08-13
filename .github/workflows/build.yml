@@ -29,16 +29,27 @@ jobs:
 
     - name: Download and extract FFmpeg for Windows
       run: |
-        # Download FFmpeg shared build (includes DLLs)
+        # Download FFmpeg shared build
         curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip -o ffmpeg.zip
         Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp
         # Find the bin folder (the extracted folder name may vary)
         $ffmpeg_dir = Get-ChildItem -Path ffmpeg_temp -Directory | Select-Object -First 1
         New-Item -ItemType Directory -Force -Path ffmpeg_bin
+        # Copy all DLLs from the bin folder to ffmpeg_bin
         Copy-Item -Path "$($ffmpeg_dir.FullName)\bin\*.dll" -Destination ffmpeg_bin\ -Force
-        # Also copy the ffmpeg.exe for debugging if needed
+        # Also copy the ffmpeg.exe for reference (optional)
         Copy-Item -Path "$($ffmpeg_dir.FullName)\bin\ffmpeg.exe" -Destination ffmpeg_bin\ -Force
         Write-Host "FFmpeg DLLs copied to ffmpeg_bin"
+
+    - name: Verify FFmpeg DLLs
+      run: |
+        if (Test-Path ffmpeg_bin) {
+          Write-Host "ffmpeg_bin exists. Contents:"
+          dir ffmpeg_bin
+        } else {
+          Write-Host "ffmpeg_bin NOT found!"
+          exit 1
+        }
 
     - name: Patch fairseq/dataclass/configs.py to fix 'help' error
       run: |
@@ -114,7 +125,7 @@ jobs:
 
     - name: Build Executable via PyInstaller
       run: |
-        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;." --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
+        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;ffmpeg_bin" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
 
     - name: Zip Final Build Folder
       run: |
