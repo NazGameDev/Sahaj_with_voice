@@ -85,12 +85,22 @@ def setup_offline_ai4bharat():
 
 setup_offline_ai4bharat()
 
+# --- Set environment variable for AI4Bharat model location ---
+if getattr(sys, 'frozen', False):
+    # The models are bundled inside _internal/ai4bharat/transliteration/transformer/models/en2indic
+    base_model_dir = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+    if os.path.exists(base_model_dir):
+        os.environ['AI4BHARAT_XLIT_MODEL_DIR'] = base_model_dir
+        print(f"Set AI4BHARAT_XLIT_MODEL_DIR to {base_model_dir}")
+    else:
+        print(f"Warning: Model directory not found at {base_model_dir}")
+
 # --- AI4BHARAT XLIT ENGINE IMPORT ---
 try:
     from ai4bharat.transliteration import XlitEngine
     HAS_XLIT = True
 except ImportError:
-    HAS_XLIT = Falsexlit_engine = XlitEngine("as", beam_width=4, rescore=False)
+    HAS_XLIT = False
 
 # --- 1. DIRECTORY PATHING SETUP ---
 if getattr(sys, 'frozen', False):
