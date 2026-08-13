@@ -1119,7 +1119,7 @@ class AppLoaderThread(QThread):
 class AssameseTypingApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("সহজ-Sahaj v1.1")
+        self.setWindowTitle("সহজ-Sahaj v3.0")
         self.resize(1050, 750)
         self.settings = QSettings("NazmulDev", "SahajApp")
         user_data = get_user_data_dir()
@@ -1160,6 +1160,7 @@ class AssameseTypingApp(QMainWindow):
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
         self.text_area.textChanged.connect(lambda: self.spell_timer.start(2500))
         self.check_spelling()
+        self.recording_active = False
 
     def toggle_engine(self, checked):
         """Toggle between Live AI (Google) and Built-in AI (Offline)"""
@@ -1171,43 +1172,58 @@ class AssameseTypingApp(QMainWindow):
             self.translation_mode = "offline"
 
     def start_voice_typing(self):
-        if voice_typing is None:
-            QMessageBox.critical(self, "Voice Typing Error", "Voice typing module is not available.\nPlease check the installation.")
-        """Start voice recording and transcription."""
-        try:
-            self.voice_btn.setEnabled(False)
-            self.voice_btn.setText("🎤 Recording...")
-            # Start recording in a separate thread
-            import threading
-            self.recording_thread = threading.Thread(target=self._record_and_transcribe)
-            self.recording_thread.daemon = True
-            self.recording_thread.start()
-        except Exception as e:
-            import traceback
-            error_msg = f"start_voice_typing error: {e}\n{traceback.format_exc()}"
-            print(error_msg)
-            # Write to log
-            log_path = os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(error_msg + '\n')
-            self.on_voice_error(error_msg)
+        """Toggle voice recording on/off."""
+        if not hasattr(self, 'recording_active') or not self.recording_active:
+            # Start recording
+            try:
+                self.voice_btn.setEnabled(False)
+                self.voice_btn.setText("⏹️ Stop Recording")
+                self.recording_active = True
+                
+                # Start recording in a separate thread
+                import threading
+                self.recording_thread = threading.Thread(target=self._record_and_transcribe)
+                self.recording_thread.daemon = True
+                self.recording_thread.start()
+                
+            except Exception as e:
+                import traceback
+                error_msg = f"start_voice_typing error: {e}\n{traceback.format_exc()}"
+                print(error_msg)
+                self.on_voice_error(error_msg)
+        else:
+            # Stop recording
+            self.recording_active = False
+            self.voice_btn.setEnabled(True)
+            self.voice_btn.setText("🎤 Start Recording")
+            # The recorder will stop in the thread
 
     def _record_and_transcribe(self):
         """Record audio and then transcribe it."""
+        recorder = None
         try:
             recorder = voice_typing.VoiceRecorder()
             if not recorder.start_recording():
                 self.on_voice_error("Could not access microphone. Please check your microphone settings and try again.")
+                self.recording_active = False
                 return
             
-            # Record for 5 seconds
-            import time
-            time.sleep(5)
+            # Keep recording until user clicks stop
+            while self.recording_active:
+                import time
+                time.sleep(0.1)
             
+            # Stop recording
             audio_file = recorder.stop_recording()
             if not audio_file:
                 self.on_voice_error("Failed to save recorded audio.")
+                self.recording_active = False
                 return
+            
+            # Reset button
+            self.voice_btn.setEnabled(True)
+            self.voice_btn.setText("🎤 Start Recording")
+            self.recording_active = False
             
             # Transcribe in a QThread
             self.transcriber_thread = voice_typing.VoiceTypingWorker(audio_file)
@@ -1219,9 +1235,14 @@ class AssameseTypingApp(QMainWindow):
             import traceback
             error_msg = f"_record_and_transcribe error: {e}\n{traceback.format_exc()}"
             print(error_msg)
-            log_path = os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(error_msg + '\n')
+            if recorder:
+                try:
+                    recorder.stop_recording()
+                except:
+                    pass
+            self.recording_active = False
+            self.voice_btn.setEnabled(True)
+            self.voice_btn.setText("🎤 Start Recording")
             self.on_voice_error(f"Recording failed: {str(e)}")
 
     def on_voice_transcribed(self, text):
@@ -1234,12 +1255,14 @@ class AssameseTypingApp(QMainWindow):
             self.text_area.setTextCursor(cursor)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
+        self.recording_active = False
 
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
+        self.recording_active = False
 
     def on_backend_loaded(self, spell_tool, dictionary, xlit_engine):
         self.spell_tool = spell_tool
