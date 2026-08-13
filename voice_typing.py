@@ -12,6 +12,11 @@ from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 def log_error(msg):
     log_path = os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')
     try:
+        # Rotate if file > 1 MB
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 1024 * 1024:
+            # Rename to .old or simply truncate
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write("")  # clear content
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
     except:
