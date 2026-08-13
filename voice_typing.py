@@ -5,7 +5,8 @@ import tempfile
 import wave
 import traceback
 import pyaudio
-from PyQt6.QtCore import QThread, pyqtSignal
+import threading
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
 # --- Logging helper ---
 def log_error(msg):
@@ -24,7 +25,6 @@ if getattr(sys, 'frozen', False):
     if os.path.exists(cache_dir):
         os.environ['INDIC_ASR_CACHE'] = cache_dir
         log_error(f"Using bundled ASR cache: {cache_dir}")
-        # List contents for debugging
         try:
             contents = os.listdir(cache_dir)
             log_error(f"Cache contents: {contents}")
@@ -32,10 +32,20 @@ if getattr(sys, 'frozen', False):
             pass
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
+        
+    # Also set FFmpeg path if bundled
+    ffmpeg_dir = os.path.join(base_path, 'ffmpeg_bin')
+    if os.path.exists(ffmpeg_dir):
+        # Add to PATH so torchaudio can find FFmpeg DLLs
+        os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
+        log_error(f"Added FFmpeg to PATH: {ffmpeg_dir}")
+    else:
+        log_error(f"Warning: FFmpeg not found at {ffmpeg_dir}")
 else:
     log_error("Running in development mode, using default cache.")
 
-# --- Now import the ASR module (it will use the cache if set) ---
+
+# --- Now import the ASR module ---
 HAS_ASR = False
 ASR_IMPORT_ERROR = None
 
@@ -54,14 +64,19 @@ except Exception as e:
 
 
 class VoiceRecorder:
-    """Handles recording audio from the microphone."""
+    """Handles recording audio from the microphone with start/stop control."""
     def __init__(self):
         self.audio = None
         self.stream = None
         self.frames = []
         self.is_recording = False
+        self.recording_thread = None
 
     def start_recording(self):
+        """Starts recording audio in a background thread."""
+        if self.is_recording:
+            return False
+        
         try:
             self.audio = pyaudio.PyAudio()
             self.frames = []
@@ -79,6 +94,7 @@ class VoiceRecorder:
         except Exception as e:
             log_error(f"VoiceRecorder.start_recording error: {e}")
             traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
+            self.is_recording = False
             return False
 
     def _callback(self, in_data, frame_count, time_info, status):
@@ -87,6 +103,7 @@ class VoiceRecorder:
         return (in_data, pyaudio.paContinue)
 
     def stop_recording(self):
+        """Stops recording and returns path to saved WAV file."""
         self.is_recording = False
         if self.stream:
             self.stream.stop_stream()
@@ -95,6 +112,9 @@ class VoiceRecorder:
         if self.audio:
             self.audio.terminate()
             self.audio = None
+
+        if not self.frames:
+            return None
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
         temp_filename = temp_file.name
@@ -109,6 +129,9 @@ class VoiceRecorder:
             log_error(f"VoiceRecorder.stop_recording error: {e}")
             traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
             return None
+
+    def is_recording_active(self):
+        return self.is_recording
 
 
 class VoiceTypingWorker(QThread):
@@ -130,8 +153,7 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Audio file not found.")
                 return
 
-            # --- CRITICAL FIX: Suppress stdout/stderr to prevent tqdm crash ---
-            # Also disable progress bars via environment variable
+            # Disable progress bars and suppress stdout to prevent tqdm crash
             os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
             devnull = open(os.devnull, 'w')
             old_stdout = sys.stdout
@@ -144,17 +166,14 @@ class VoiceTypingWorker(QThread):
                 transcriber = IndicTranscriber()
                 log_error("IndicTranscriber initialized.")
             finally:
-                # Restore stdout/stderr
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
                 devnull.close()
 
-            # Now transcribe (progress bars are disabled)
             log_error(f"Transcribing file: {self.audio_filepath}")
             transcribed_text = transcriber.transcribe_rnnt(self.audio_filepath, "as")
             log_error(f"Transcription result: {transcribed_text}")
 
-            # Clean up temp file
             try:
                 os.remove(self.audio_filepath)
             except:
