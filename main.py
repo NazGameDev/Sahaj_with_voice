@@ -1141,6 +1141,8 @@ class AssameseTypingApp(QMainWindow):
         self.ignored_error_ranges = set()
         self.phonetic_enabled = True
         self.translation_mode = "google"
+        self.recording_active = False
+        self.recording_worker = None
         self.loader_thread = AppLoaderThread(self.dictionary_file, resource_path("assamese_dictionary.txt"))
         self.loader_thread.finished_loading.connect(self.on_backend_loaded)
         self.loader_thread.error_signal.connect(self.show_engine_error)
@@ -1160,8 +1162,7 @@ class AssameseTypingApp(QMainWindow):
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
         self.text_area.textChanged.connect(lambda: self.spell_timer.start(2500))
         self.check_spelling()
-        self.recording_active = False
-
+        
     def toggle_engine(self, checked):
         """Toggle between Live AI (Google) and Built-in AI (Offline)"""
         if checked:
@@ -1173,18 +1174,17 @@ class AssameseTypingApp(QMainWindow):
 
     def start_voice_typing(self):
         """Toggle voice recording on/off."""
-        if not hasattr(self, 'recording_active') or not self.recording_active:
+        if not hasattr(self, 'recording_worker') or self.recording_worker is None:
             # Start recording
             try:
                 self.voice_btn.setEnabled(False)
                 self.voice_btn.setText("⏹️ Stop Recording")
-                self.recording_active = True
                 
-                # Start recording in a separate thread
-                import threading
-                self.recording_thread = threading.Thread(target=self._record_and_transcribe)
-                self.recording_thread.daemon = True
-                self.recording_thread.start()
+                self.recording_worker = voice_typing.VoiceRecorderWorker()
+                self.recording_worker.recording_started.connect(self.on_recording_started)
+                self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
+                self.recording_worker.error.connect(self.on_voice_error)
+                self.recording_worker.start()
                 
             except Exception as e:
                 import traceback
@@ -1193,57 +1193,27 @@ class AssameseTypingApp(QMainWindow):
                 self.on_voice_error(error_msg)
         else:
             # Stop recording
-            self.recording_active = False
-            self.voice_btn.setEnabled(True)
-            self.voice_btn.setText("🎤 Start Recording")
-            # The recorder will stop in the thread
+            if self.recording_worker:
+                self.recording_worker.stop()
+                self.voice_btn.setEnabled(False)
+                self.voice_btn.setText("⏹️ Stopping...")
 
-    def _record_and_transcribe(self):
-        """Record audio and then transcribe it."""
-        recorder = None
-        try:
-            recorder = voice_typing.VoiceRecorder()
-            if not recorder.start_recording():
-                self.on_voice_error("Could not access microphone. Please check your microphone settings and try again.")
-                self.recording_active = False
-                return
-            
-            # Keep recording until user clicks stop
-            while self.recording_active:
-                import time
-                time.sleep(0.1)
-            
-            # Stop recording
-            audio_file = recorder.stop_recording()
-            if not audio_file:
-                self.on_voice_error("Failed to save recorded audio.")
-                self.recording_active = False
-                return
-            
-            # Reset button
-            self.voice_btn.setEnabled(True)
-            self.voice_btn.setText("🎤 Start Recording")
-            self.recording_active = False
-            
-            # Transcribe in a QThread
-            self.transcriber_thread = voice_typing.VoiceTypingWorker(audio_file)
-            self.transcriber_thread.finished.connect(self.on_voice_transcribed)
-            self.transcriber_thread.error.connect(self.on_voice_error)
-            self.transcriber_thread.start()
-            
-        except Exception as e:
-            import traceback
-            error_msg = f"_record_and_transcribe error: {e}\n{traceback.format_exc()}"
-            print(error_msg)
-            if recorder:
-                try:
-                    recorder.stop_recording()
-                except:
-                    pass
-            self.recording_active = False
-            self.voice_btn.setEnabled(True)
-            self.voice_btn.setText("🎤 Start Recording")
-            self.on_voice_error(f"Recording failed: {str(e)}")
+    def on_recording_started(self):
+        """Called when recording actually starts."""
+        self.voice_btn.setEnabled(True)
+        self.voice_btn.setText("⏹️ Stop Recording")
+
+    def on_recording_stopped(self, audio_filepath):
+        """Called when recording stops and audio file is saved."""
+        self.voice_btn.setEnabled(False)
+        self.voice_btn.setText("⏳ Transcribing...")
+        self.recording_worker = None
+        
+        # Start transcription in a new thread
+        self.transcriber_thread = voice_typing.VoiceTypingWorker(audio_filepath)
+        self.transcriber_thread.finished.connect(self.on_voice_transcribed)
+        self.transcriber_thread.error.connect(self.on_voice_error)
+        self.transcriber_thread.start()
 
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
@@ -1255,14 +1225,13 @@ class AssameseTypingApp(QMainWindow):
             self.text_area.setTextCursor(cursor)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
-        self.recording_active = False
 
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
-        self.recording_active = False
+        self.recording_worker = None
 
     def on_backend_loaded(self, spell_tool, dictionary, xlit_engine):
         self.spell_tool = spell_tool
@@ -1297,7 +1266,7 @@ class AssameseTypingApp(QMainWindow):
             scaled_pixmap = pixmap.scaledToHeight(70, Qt.TransformationMode.SmoothTransformation)
             self.header_logo.setPixmap(scaled_pixmap)
         else:
-            self.header_logo.setText("সহজ-Sahaj v1.1")
+            self.header_logo.setText("সহজ-Sahaj v3.0")
             self.header_logo.setObjectName("headerText")
             self.header_logo.setFont(QFont("Arial", 22, QFont.Weight.Bold))
 
