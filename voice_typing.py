@@ -24,12 +24,18 @@ if getattr(sys, 'frozen', False):
     if os.path.exists(cache_dir):
         os.environ['INDIC_ASR_CACHE'] = cache_dir
         log_error(f"Using bundled ASR cache: {cache_dir}")
+        # List contents for debugging
+        try:
+            contents = os.listdir(cache_dir)
+            log_error(f"Cache contents: {contents}")
+        except:
+            pass
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
 else:
     log_error("Running in development mode, using default cache.")
 
-# --- Now import the ASR module ---
+# --- Now import the ASR module (it will use the cache if set) ---
 HAS_ASR = False
 ASR_IMPORT_ERROR = None
 
@@ -45,25 +51,6 @@ except Exception as e:
     ASR_IMPORT_ERROR = str(e)
     log_error(f"Voice typing: Unexpected import error - {e}")
     traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
-    log_error("Voice typing: indic_asr_onnx imported successfully.")
-except ImportError as e:
-    ASR_IMPORT_ERROR = str(e)
-    log_error(f"Voice typing: ImportError - {e}")
-    traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
-except Exception as e:
-    ASR_IMPORT_ERROR = str(e)
-    log_error(f"Voice typing: Unexpected import error - {e}")
-    traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
-
-# If running as bundled exe, point cache to internal folder
-if getattr(sys, 'frozen', False):
-    base_path = sys._MEIPASS
-    cache_dir = os.path.join(base_path, 'indic_asr_cache')
-    if os.path.exists(cache_dir):
-        os.environ['INDIC_ASR_CACHE'] = cache_dir
-        log_error(f"Using bundled ASR cache: {cache_dir}")
-    else:
-        log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
 
 
 class VoiceRecorder:
@@ -143,14 +130,31 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Audio file not found.")
                 return
 
-            # Initialize and transcribe
-            log_error("Initializing IndicTranscriber...")
-            transcriber = IndicTranscriber()
-            log_error("IndicTranscriber initialized.")
+            # --- CRITICAL FIX: Suppress stdout/stderr to prevent tqdm crash ---
+            # Also disable progress bars via environment variable
+            os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+            devnull = open(os.devnull, 'w')
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = devnull
+            sys.stderr = devnull
+
+            try:
+                log_error("Initializing IndicTranscriber...")
+                transcriber = IndicTranscriber()
+                log_error("IndicTranscriber initialized.")
+            finally:
+                # Restore stdout/stderr
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                devnull.close()
+
+            # Now transcribe (progress bars are disabled)
             log_error(f"Transcribing file: {self.audio_filepath}")
             transcribed_text = transcriber.transcribe_rnnt(self.audio_filepath, "as")
             log_error(f"Transcription result: {transcribed_text}")
 
+            # Clean up temp file
             try:
                 os.remove(self.audio_filepath)
             except:
@@ -160,6 +164,7 @@ class VoiceTypingWorker(QThread):
                 self.finished.emit(transcribed_text.strip())
             else:
                 self.error.emit("Could not understand the audio. Please try again.")
+
         except Exception as e:
             import traceback
             error_msg = f"VoiceTypingWorker.run error: {str(e)}\n{traceback.format_exc()}"
