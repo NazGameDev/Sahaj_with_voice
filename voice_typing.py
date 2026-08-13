@@ -10,7 +10,6 @@ from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
 # --- Logging helper ---
 def log_error(msg):
-    """Append error message to a log file in the user's home."""
     log_path = os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')
     try:
         with open(log_path, 'a', encoding='utf-8') as f:
@@ -18,7 +17,7 @@ def log_error(msg):
     except:
         pass
 
-# --- Set cache directory BEFORE importing the ASR module ---
+# --- Set cache and FFmpeg paths ---
 if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS
     cache_dir = os.path.join(base_path, 'indic_asr_cache')
@@ -32,20 +31,17 @@ if getattr(sys, 'frozen', False):
             pass
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
-        
-    # Also set FFmpeg path if bundled
+    
     ffmpeg_dir = os.path.join(base_path, 'ffmpeg_bin')
-    if os.path.exists(ffmpeg_dir):
-        # Add to PATH so torchaudio can find FFmpeg DLLs
+    if os.path.exists(ffmpeg_dir) and os.listdir(ffmpeg_dir):
         os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
         log_error(f"Added FFmpeg to PATH: {ffmpeg_dir}")
+        # Also set TORCHAUDIO_USE_FFMPEG=1 to force torchaudio to use FFmpeg
+        os.environ['TORCHAUDIO_USE_FFMPEG'] = '1'
     else:
         log_error(f"Warning: FFmpeg not found at {ffmpeg_dir}")
-else:
-    log_error("Running in development mode, using default cache.")
 
-
-# --- Now import the ASR module ---
+# --- Import ASR ---
 HAS_ASR = False
 ASR_IMPORT_ERROR = None
 
@@ -63,24 +59,27 @@ except Exception as e:
     traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
 
 
-class VoiceRecorder:
-    """Handles recording audio from the microphone with start/stop control."""
+class VoiceRecorderWorker(QThread):
+    """Worker thread that records audio and emits the saved file path."""
+    recording_started = pyqtSignal()
+    recording_stopped = pyqtSignal(str)  # emits path to saved WAV file
+    error = pyqtSignal(str)
+
     def __init__(self):
+        super().__init__()
         self.audio = None
         self.stream = None
         self.frames = []
         self.is_recording = False
-        self.recording_thread = None
+        self._stop_requested = False
 
-    def start_recording(self):
-        """Starts recording audio in a background thread."""
-        if self.is_recording:
-            return False
-        
+    def run(self):
+        """Starts recording and runs until stop() is called."""
         try:
             self.audio = pyaudio.PyAudio()
             self.frames = []
             self.is_recording = True
+            self._stop_requested = False
             self.stream = self.audio.open(
                 format=pyaudio.paInt16,
                 channels=1,
@@ -90,48 +89,50 @@ class VoiceRecorder:
                 stream_callback=self._callback
             )
             self.stream.start_stream()
-            return True
-        except Exception as e:
-            log_error(f"VoiceRecorder.start_recording error: {e}")
-            traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
+            self.recording_started.emit()
+            log_error("Recording started.")
+
+            # Keep the thread alive until stop is requested
+            while not self._stop_requested:
+                self.msleep(100)
+
+            # Stop recording
             self.is_recording = False
-            return False
+            if self.stream:
+                self.stream.stop_stream()
+                self.stream.close()
+                self.stream = None
+            if self.audio:
+                self.audio.terminate()
+                self.audio = None
+
+            # Save the audio to a WAV file
+            if self.frames:
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                temp_filename = temp_file.name
+                with wave.open(temp_filename, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)  # 16-bit
+                    wf.setframerate(16000)
+                    wf.writeframes(b''.join(self.frames))
+                log_error(f"Recording saved to {temp_filename}")
+                self.recording_stopped.emit(temp_filename)
+            else:
+                self.error.emit("No audio recorded.")
+
+        except Exception as e:
+            error_msg = f"Recording error: {str(e)}\n{traceback.format_exc()}"
+            log_error(error_msg)
+            self.error.emit(error_msg)
 
     def _callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
             self.frames.append(in_data)
         return (in_data, pyaudio.paContinue)
 
-    def stop_recording(self):
-        """Stops recording and returns path to saved WAV file."""
-        self.is_recording = False
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
-        if self.audio:
-            self.audio.terminate()
-            self.audio = None
-
-        if not self.frames:
-            return None
-
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        temp_filename = temp_file.name
-        try:
-            with wave.open(temp_filename, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)  # 16-bit
-                wf.setframerate(16000)
-                wf.writeframes(b''.join(self.frames))
-            return temp_filename
-        except Exception as e:
-            log_error(f"VoiceRecorder.stop_recording error: {e}")
-            traceback.print_exc(file=open(os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log'), 'a'))
-            return None
-
-    def is_recording_active(self):
-        return self.is_recording
+    def stop(self):
+        """Request to stop recording."""
+        self._stop_requested = True
 
 
 class VoiceTypingWorker(QThread):
