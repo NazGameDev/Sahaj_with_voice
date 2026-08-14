@@ -1042,23 +1042,13 @@ class AppLoaderThread(QThread):
             except Exception:
                 dictionary = {}
 
-        xlit_engine = None
+                xlit_engine = None
         if HAS_XLIT:
             try:
-                # Determine model directory for bundled installation
-                if getattr(sys, 'frozen', False):
-                    model_dir = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
-                    if not os.path.exists(model_dir):
-                        print(f"Warning: model_dir not found at {model_dir}, using default.")
-                        model_dir = None
-                else:
-                    model_dir = None
-
+                # The environment variable AI4BHARAT_XLIT_MODEL_DIR was set earlier,
+                # so the engine will find the models automatically.
                 with suppress_stdout():
-                    if model_dir:
-                        xlit_engine = XlitEngine("as", beam_width=4, rescore=False, model_dir=model_dir)
-                    else:
-                        xlit_engine = XlitEngine("as", beam_width=4, rescore=False)
+                    xlit_engine = XlitEngine("as", beam_width=4, rescore=False)
 
                 # Quick test to ensure it works
                 test = xlit_engine.translit_word("test", topk=1)
@@ -1071,7 +1061,6 @@ class AppLoaderThread(QThread):
                 import traceback
                 error_msg = f"Failed to load the AI transliteration engine.\n\nError: {str(e)}\n\nPlease check if models are properly installed."
                 print(error_msg)
-                # Write full traceback to a log file
                 log_path = os.path.join(os.path.expanduser('~'), 'sahaj_error.log')
                 with open(log_path, 'w', encoding='utf-8') as f:
                     traceback.print_exc(file=f)
