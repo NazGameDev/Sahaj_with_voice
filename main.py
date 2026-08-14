@@ -28,63 +28,6 @@ def suppress_stdout():
         finally:
             sys.stdout = old_stdout
 
-def setup_offline_ai4bharat():
-    if getattr(sys, 'frozen', False):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(__file__)
-
-    target_root = os.path.join(os.path.expanduser('~'), '.ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
-    target_v1_dir = os.path.join(target_root, 'v1.0')
-    bundled_cache = os.path.join(base_path, 'offline_model_cache')
-
-    # 1. Check bundled cache exists
-    if not os.path.exists(bundled_cache):
-        print("ERROR: offline_model_cache not found in the executable bundle!")
-        return
-
-    # 2. Define required files (the engine needs these to work)
-    required_files = ['model.pt', 'vocab.txt', 'dict.txt']
-    is_valid = True
-
-    if os.path.exists(target_v1_dir):
-        for f in required_files:
-            file_path = os.path.join(target_v1_dir, f)
-            if not os.path.exists(file_path) or os.path.getsize(file_path) < 1000:
-                is_valid = False
-                break
-    else:
-        is_valid = False
-
-    if not is_valid:
-        # Remove the old folder (even if it has some files, they are invalid)
-        if os.path.exists(target_v1_dir):
-            try:
-                shutil.rmtree(target_v1_dir)
-                print("Removed invalid/empty target model folder.")
-            except Exception as e:
-                print(f"Could not remove invalid target folder: {e}")
-
-        # Copy fresh models
-        try:
-            os.makedirs(target_root, exist_ok=True)
-            shutil.copytree(bundled_cache, target_v1_dir, dirs_exist_ok=True)
-            print(f"Offline models successfully copied to {target_v1_dir}")
-
-            # Verify again after copy
-            for f in required_files:
-                file_path = os.path.join(target_v1_dir, f)
-                if not os.path.exists(file_path):
-                    raise Exception(f"Missing required file after copy: {f}")
-
-            print("All required model files are present.")
-        except Exception as e:
-            print(f"CRITICAL: Failed to copy offline models: {e}")
-    else:
-        print(f"Offline models already valid at {target_v1_dir}")
-
-setup_offline_ai4bharat()
-
 # --- Set environment variable for AI4Bharat model location ---
 if getattr(sys, 'frozen', False):
     # The models are bundled inside _internal/ai4bharat/transliteration/transformer/models/en2indic
@@ -1110,26 +1053,20 @@ class AppLoaderThread(QThread):
                         model_dir = None
                 else:
                     model_dir = None
-        
+
                 with suppress_stdout():
                     if model_dir:
                         xlit_engine = XlitEngine("as", beam_width=4, rescore=False, model_dir=model_dir)
                     else:
                         xlit_engine = XlitEngine("as", beam_width=4, rescore=False)
-        
-                # Quick test
-                test = xlit_engine.translit_word("test", topk=1)
-                if test:
-                    print("XlitEngine initialized successfully.")
-                else:
-                    print("XlitEngine initialized but returned empty test result.")
-            except Exception as e:
+
                 # Quick test to ensure it works
                 test = xlit_engine.translit_word("test", topk=1)
                 if test:
                     print("XlitEngine initialized successfully.")
                 else:
                     print("XlitEngine initialized but returned empty test result.")
+
             except Exception as e:
                 import traceback
                 error_msg = f"Failed to load the AI transliteration engine.\n\nError: {str(e)}\n\nPlease check if models are properly installed."
@@ -1138,7 +1075,6 @@ class AppLoaderThread(QThread):
                 log_path = os.path.join(os.path.expanduser('~'), 'sahaj_error.log')
                 with open(log_path, 'w', encoding='utf-8') as f:
                     traceback.print_exc(file=f)
-                # Emit error signal with the full traceback
                 full_error = traceback.format_exc()
                 self.error_signal.emit(f"{error_msg}\n\nFull traceback:\n{full_error}")
                 xlit_engine = None
@@ -1871,7 +1807,7 @@ class AssameseTypingApp(QMainWindow):
         layout.setSpacing(10)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel("সহজ-Sahaj v3.1 — AI Assamese Typing Tool")
+        title = QLabel("সহজ-Sahaj v3.0 — AI Assamese Typing Tool")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
@@ -2050,7 +1986,7 @@ if __name__ == "__main__":
                     padding: 20px;
                 }
             """)
-            splash_label.setText("সহজ-Sahaj-v1.1\n\nLoading, please wait...\n\nDeveloped by Nazmul Hussain")
+            splash_label.setText("সহজ-Sahaj-v3.0\n\nLoading, please wait...\n\nDeveloped by Nazmul Hussain")
             splash_pixmap = splash_label.grab()
             splash = QSplashScreen(splash_pixmap, Qt.WindowType.WindowStaysOnTopHint)
 
