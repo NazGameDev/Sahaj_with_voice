@@ -1102,8 +1102,28 @@ class AppLoaderThread(QThread):
         xlit_engine = None
         if HAS_XLIT:
             try:
+                # Determine model directory for bundled installation
+                if getattr(sys, 'frozen', False):
+                    model_dir = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+                    if not os.path.exists(model_dir):
+                        print(f"Warning: model_dir not found at {model_dir}, using default.")
+                        model_dir = None
+                else:
+                    model_dir = None
+        
                 with suppress_stdout():
-                    xlit_engine = XlitEngine("as", beam_width=4, rescore=False)
+                    if model_dir:
+                        xlit_engine = XlitEngine("as", beam_width=4, rescore=False, model_dir=model_dir)
+                    else:
+                        xlit_engine = XlitEngine("as", beam_width=4, rescore=False)
+        
+                # Quick test
+                test = xlit_engine.translit_word("test", topk=1)
+                if test:
+                    print("XlitEngine initialized successfully.")
+                else:
+                    print("XlitEngine initialized but returned empty test result.")
+            except Exception as e:
                 # Quick test to ensure it works
                 test = xlit_engine.translit_word("test", topk=1)
                 if test:
