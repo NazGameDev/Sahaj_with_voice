@@ -1168,6 +1168,11 @@ class AssameseTypingApp(QMainWindow):
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
         self.text_area.textChanged.connect(lambda: self.spell_timer.start(2500))
         self.check_spelling()
+        # Countdown timer for voice recording
+        self.remaining_seconds = 24
+        self.countdown_timer = QTimer()
+        self.countdown_timer.timeout.connect(self.update_countdown)
+        self.countdown_timer.setInterval(1000)  # 1 second
         
     def toggle_engine(self, checked):
         """Toggle between Live AI (Google) and Built-in AI (Offline)"""
@@ -1184,13 +1189,19 @@ class AssameseTypingApp(QMainWindow):
             # Start recording
             try:
                 self.voice_btn.setEnabled(False)
-                self.voice_btn.setText("⏹️ Stop Recording")
+                self.voice_btn.setText("⏹️ Recording...")
+                self.remaining_seconds = 24
+                self.voice_timer_label.setText("⏱️ 24s")
                 
-                self.recording_worker = voice_typing.VoiceRecorderWorker()
+                # Create worker with max duration 24 seconds
+                self.recording_worker = voice_typing.VoiceRecorderWorker(max_duration=24)
                 self.recording_worker.recording_started.connect(self.on_recording_started)
                 self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
                 self.recording_worker.error.connect(self.on_voice_error)
                 self.recording_worker.start()
+                
+                # Start the countdown timer
+                self.countdown_timer.start()
                 
             except Exception as e:
                 import traceback
@@ -1198,21 +1209,24 @@ class AssameseTypingApp(QMainWindow):
                 print(error_msg)
                 self.on_voice_error(error_msg)
         else:
-            # Stop recording
+            # Stop recording (user clicked button again)
             if self.recording_worker:
                 self.recording_worker.stop()
                 self.voice_btn.setEnabled(False)
                 self.voice_btn.setText("⏹️ Stopping...")
+                self.countdown_timer.stop()
 
     def on_recording_started(self):
         """Called when recording actually starts."""
         self.voice_btn.setEnabled(True)
-        self.voice_btn.setText("⏹️ Stop Recording")
+        self.voice_btn.setText("⏹️ Stop")
 
     def on_recording_stopped(self, audio_filepath):
-        """Called when recording stops and audio file is saved."""
+        """Called when recording stops (either by user or timer)."""
+        self.countdown_timer.stop()
         self.voice_btn.setEnabled(False)
         self.voice_btn.setText("⏳ Transcribing...")
+        self.voice_timer_label.setText("⏱️ Processing...")
         self.recording_worker = None
         
         # Start transcription in a new thread
@@ -1223,6 +1237,7 @@ class AssameseTypingApp(QMainWindow):
 
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
+        self.voice_timer_label.setText("⏱️ 24s")  # reset label
         if text and text.strip():
             self.text_area.insertPlainText(text + " ")
             self.text_area.setFocus()
@@ -1234,10 +1249,25 @@ class AssameseTypingApp(QMainWindow):
 
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
+        self.countdown_timer.stop()
+        self.voice_timer_label.setText("⏱️ 24s")
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
         self.recording_worker = None
+
+    def update_countdown(self):
+        """Called every second to update the countdown label."""
+        self.remaining_seconds -= 1
+        self.voice_timer_label.setText(f"⏱️ {self.remaining_seconds}s")
+        
+        if self.remaining_seconds <= 0:
+            # Time's up – stop recording
+            self.countdown_timer.stop()
+            if self.recording_worker:
+                self.recording_worker.stop()
+                self.voice_btn.setEnabled(False)
+                self.voice_btn.setText("⏹️ Stopping...")    
 
     def on_backend_loaded(self, spell_tool, dictionary, xlit_engine):
         self.spell_tool = spell_tool
@@ -1403,6 +1433,12 @@ class AssameseTypingApp(QMainWindow):
         """)
         self.voice_btn.clicked.connect(self.start_voice_typing)
 
+        self.voice_timer_label = QLabel("⏱️ 24s")
+        self.voice_timer_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        self.voice_timer_label.setStyleSheet("color: #0D6EFD;")
+        self.voice_timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.voice_timer_label.setFixedWidth(60)
+
         undo_btn = QPushButton("Undo")
         redo_btn = QPushButton("Redo")
         redo_btn.setToolTip("Redo last undone change (Ctrl+Y)")
@@ -1429,6 +1465,7 @@ class AssameseTypingApp(QMainWindow):
         toolbar.addWidget(self.phonetic_btn)
         toolbar.addWidget(self.engine_toggle)
         toolbar.addWidget(self.voice_btn)
+        toolbar.addWidget(self.voice_timer_label)
         toolbar.addWidget(undo_btn)
         toolbar.addWidget(redo_btn)
         toolbar.addWidget(inc_font_btn)
