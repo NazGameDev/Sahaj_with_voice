@@ -30,13 +30,21 @@ def suppress_stdout():
 
 # --- Set environment variable for AI4Bharat model location ---
 if getattr(sys, 'frozen', False):
-    # The models are bundled inside _internal/ai4bharat/transliteration/transformer/models/en2indic
-    base_model_dir = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+    # In a one‑dir PyInstaller build, the models are inside the '_internal' folder.
+    base_model_dir = os.path.join(sys._MEIPASS, '_internal', 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
     if os.path.exists(base_model_dir):
         os.environ['AI4BHARAT_XLIT_MODEL_DIR'] = base_model_dir
         print(f"Set AI4BHARAT_XLIT_MODEL_DIR to {base_model_dir}")
     else:
-        print(f"Warning: Model directory not found at {base_model_dir}")
+        # Fallback: try without '_internal' (in case of one‑file build, though we use one‑dir)
+        base_model_dir_alt = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+        if os.path.exists(base_model_dir_alt):
+            os.environ['AI4BHARAT_XLIT_MODEL_DIR'] = base_model_dir_alt
+            print(f"Set AI4BHARAT_XLIT_MODEL_DIR to {base_model_dir_alt}")
+        else:
+            print(f"Warning: Model directory not found at {base_model_dir} or {base_model_dir_alt}")
+else:
+    print("Development mode: using default model directory.")
 
 # --- AI4BHARAT XLIT ENGINE IMPORT ---
 try:
