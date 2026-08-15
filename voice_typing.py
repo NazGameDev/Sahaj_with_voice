@@ -1,4 +1,4 @@
-# voice_typing.py
+import time
 import os
 import sys
 import tempfile
@@ -70,21 +70,23 @@ class VoiceRecorderWorker(QThread):
     recording_stopped = pyqtSignal(str)  # emits path to saved WAV file
     error = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, max_duration=24):
         super().__init__()
         self.audio = None
         self.stream = None
         self.frames = []
         self.is_recording = False
         self._stop_requested = False
+        self.max_duration = max_duration
+        self.start_time = None
 
     def run(self):
-        """Starts recording and runs until stop() is called."""
         try:
             self.audio = pyaudio.PyAudio()
             self.frames = []
             self.is_recording = True
             self._stop_requested = False
+            self.start_time = time.time()
             self.stream = self.audio.open(
                 format=pyaudio.paInt16,
                 channels=1,
@@ -97,8 +99,12 @@ class VoiceRecorderWorker(QThread):
             self.recording_started.emit()
             log_error("Recording started.")
 
-            # Keep the thread alive until stop is requested
+            # Keep the thread alive until stop is requested or max duration reached
             while not self._stop_requested:
+                elapsed = time.time() - self.start_time
+                if elapsed >= self.max_duration:
+                    log_error(f"Reached max duration ({self.max_duration}s), stopping.")
+                    break
                 self.msleep(100)
 
             # Stop recording
@@ -159,7 +165,27 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Audio file not found.")
                 return
 
-            # Disable progress bars and suppress stdout to prevent tqdm crash
+            # --- Chunk the audio into 12-second segments (with 2-second overlap) ---
+            CHUNK_SECONDS = 12
+            OVERLAP_SECONDS = 2
+            SAMPLE_RATE = 16000
+            CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
+            OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
+
+            # Read the entire WAV file into a bytearray
+            import array
+            with wave.open(self.audio_filepath, 'rb') as wf:
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                framerate = wf.getframerate()
+                n_frames = wf.getnframes()
+                raw_data = wf.readframes(n_frames)
+
+            # Convert raw bytes to a list of samples (assuming mono, 16-bit)
+            samples = array.array('h', raw_data)  # 'h' = signed short (16-bit)
+            total_samples = len(samples)
+
+            # Disable progress bars and suppress stdout
             os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
             devnull = open(os.devnull, 'w')
             old_stdout = sys.stdout
@@ -168,7 +194,6 @@ class VoiceTypingWorker(QThread):
             sys.stderr = devnull
 
             try:
-                log_error("Initializing IndicTranscriber...")
                 transcriber = IndicTranscriber()
                 log_error("IndicTranscriber initialized.")
             finally:
@@ -176,17 +201,53 @@ class VoiceTypingWorker(QThread):
                 sys.stderr = old_stderr
                 devnull.close()
 
-            log_error(f"Transcribing file: {self.audio_filepath}")
-            transcribed_text = transcriber.transcribe_rnnt(self.audio_filepath, "as")
-            log_error(f"Transcription result: {transcribed_text}")
+            full_text = []
+            start_sample = 0
 
+            while start_sample < total_samples:
+                end_sample = min(start_sample + CHUNK_SAMPLES, total_samples)
+                chunk_samples = samples[start_sample:end_sample]
+
+                # Write chunk to a temporary WAV file
+                temp_chunk = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                temp_chunk_path = temp_chunk.name
+                with wave.open(temp_chunk_path, 'wb') as wf_chunk:
+                    wf_chunk.setnchannels(1)
+                    wf_chunk.setsampwidth(2)  # 16-bit
+                    wf_chunk.setframerate(SAMPLE_RATE)
+                    wf_chunk.writeframes(chunk_samples.tobytes())
+
+                # Transcribe the chunk
+                try:
+                    chunk_text = transcriber.transcribe_rnnt(temp_chunk_path, "as")
+                    if chunk_text and chunk_text.strip():
+                        full_text.append(chunk_text.strip())
+                    # Clean up temp file
+                    os.remove(temp_chunk_path)
+                except Exception as e:
+                    log_error(f"Chunk transcription error: {e}")
+                    try:
+                        os.remove(temp_chunk_path)
+                    except:
+                        pass
+                    # Continue with next chunk
+
+                # Move to next chunk with overlap
+                start_sample += (CHUNK_SAMPLES - OVERLAP_SAMPLES)
+
+                # If we have reached the end, break
+                if start_sample >= total_samples:
+                    break
+
+            # Clean up original audio file
             try:
                 os.remove(self.audio_filepath)
             except:
                 pass
 
-            if transcribed_text and transcribed_text.strip():
-                self.finished.emit(transcribed_text.strip())
+            if full_text:
+                combined = " ".join(full_text).strip()
+                self.finished.emit(combined)
             else:
                 self.error.emit("Could not understand the audio. Please try again.")
 
