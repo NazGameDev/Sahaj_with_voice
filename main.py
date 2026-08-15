@@ -46,6 +46,68 @@ if getattr(sys, 'frozen', False):
 else:
     print("Development mode: using default model directory.")
 
+def setup_default_models():
+    """Copy bundled models to the default location ~/.AI4Bharat_Xlit_Models/en2indic."""
+    if not getattr(sys, 'frozen', False):
+        return  # only needed for bundled app
+
+    # Default location used by XlitEngine
+    target_root = os.path.join(os.path.expanduser('~'), '.AI4Bharat_Xlit_Models', 'en2indic')
+    target_v1_dir = os.path.join(target_root, 'v1.0')
+
+    # Path to bundled models inside _internal
+    bundled_root = os.path.join(sys._MEIPASS, '_internal', 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+    if not os.path.exists(bundled_root):
+        # fallback: try without _internal
+        bundled_root = os.path.join(sys._MEIPASS, 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+        if not os.path.exists(bundled_root):
+            print("ERROR: Bundled models not found.")
+            return
+
+    # Check if existing models are valid
+    required_files = ['model.pt', 'vocab.txt', 'dict.txt']
+    is_valid = True
+    if os.path.exists(target_v1_dir):
+        for f in required_files:
+            file_path = os.path.join(target_v1_dir, f)
+            if not os.path.exists(file_path) or os.path.getsize(file_path) < 1000:
+                is_valid = False
+                break
+        # also check lang_list.txt
+        lang_file = os.path.join(target_root, 'lang_list.txt')
+        if not os.path.exists(lang_file) or os.path.getsize(lang_file) < 100:
+            is_valid = False
+    else:
+        is_valid = False
+
+    if is_valid:
+        print("Models already present in default location.")
+        return
+
+    # Remove old invalid folder
+    if os.path.exists(target_v1_dir):
+        shutil.rmtree(target_v1_dir)
+
+    # Copy v1.0 folder
+    shutil.copytree(os.path.join(bundled_root, 'v1.0'), target_v1_dir, dirs_exist_ok=True)
+
+    # Copy lang_list.txt
+    src_lang = os.path.join(bundled_root, 'lang_list.txt')
+    if os.path.exists(src_lang):
+        shutil.copy2(src_lang, target_root)
+        print("Copied lang_list.txt")
+
+    print("Models copied to default location:", target_root)
+
+# --- Set environment variable (optional, but keep it) ---
+if getattr(sys, 'frozen', False):
+    base_model_dir = os.path.join(sys._MEIPASS, '_internal', 'ai4bharat', 'transliteration', 'transformer', 'models', 'en2indic')
+    if os.path.exists(base_model_dir):
+        os.environ['AI4BHARAT_XLIT_MODEL_DIR'] = base_model_dir
+
+# --- Now copy models to default location (ensures engine finds them) ---
+setup_default_models()
+
 # --- AI4BHARAT XLIT ENGINE IMPORT ---
 try:
     from ai4bharat.transliteration import XlitEngine
@@ -1923,6 +1985,8 @@ def resource_path(relative_path):
 
 
 if __name__ == "__main__":
+    import time  # add this at the top if not already imported
+    
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -1957,38 +2021,78 @@ if __name__ == "__main__":
         available_families = [f for f in available_families if not (f in seen or seen.add(f))]
         CUSTOM_FONT_FAMILIES = available_families
 
+        # --- Create splash screen with status label ---
         splash_gif_path = resource_path("splash_animation.gif")
 
+        # Main splash widget
+        splash = QWidget()
+        splash.setWindowFlags(Qt.WindowType.SplashScreen |
+                              Qt.WindowType.WindowStaysOnTopHint |
+                              Qt.WindowType.FramelessWindowHint)
+        splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        splash.setFixedSize(480, 300)   # adjust to your GIF size
+
+        layout = QVBoxLayout(splash)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Movie label (the GIF)
+        movie_label = QLabel()
         if os.path.exists(splash_gif_path):
-            splash = QLabel()
-            splash.setWindowFlags(Qt.WindowType.SplashScreen |
-                                  Qt.WindowType.WindowStaysOnTopHint |
-                                  Qt.WindowType.FramelessWindowHint)
-            splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             movie = QMovie(splash_gif_path)
-            splash.setMovie(movie)
+            movie_label.setMovie(movie)
             movie.start()
         else:
-            splash_label = QLabel()
-            splash_label.setFixedSize(450, 250)
-            splash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            splash_label.setStyleSheet("""
-                QLabel {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #2C3E50, stop:1 #3498DB);
-                    color: white;
-                    font-family: "Segoe UI";
-                    font-size: 26px;
-                    font-weight: bold;
-                    border-radius: 12px;
-                    padding: 20px;
-                }
-            """)
-            splash_label.setText("সহজ-Sahaj-v3.0\n\nLoading, please wait...\n\nDeveloped by Nazmul Hussain")
-            splash_pixmap = splash_label.grab()
-            splash = QSplashScreen(splash_pixmap, Qt.WindowType.WindowStaysOnTopHint)
+            # fallback text
+            movie_label.setText("সহজ-Sahaj_v3.0\nLoading...")
+            movie_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            movie_label.setStyleSheet("color: white; font-size: 24px; font-weight: bold;")
+        layout.addWidget(movie_label)
+
+        # Status label (will be shown at bottom)
+        status_label = QLabel("Initializing...")
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_label.setStyleSheet("""
+            color: #cccccc;
+            font-size: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 6px;
+            border-radius: 4px;
+        """)
+        status_label.setFixedHeight(30)
+        layout.addWidget(status_label)
 
         splash.show()
         app.processEvents()
+
+        # --- First‑run model copy with status update ---
+        if getattr(sys, 'frozen', False):
+            # Quick check if models are already present
+            target_root = os.path.join(os.path.expanduser('~'), '.AI4Bharat_Xlit_Models', 'en2indic')
+            target_v1_dir = os.path.join(target_root, 'v1.0')
+            valid = True
+            if os.path.exists(target_v1_dir):
+                for f in ['model.pt', 'vocab.txt', 'dict.txt']:
+                    if not os.path.exists(os.path.join(target_v1_dir, f)):
+                        valid = False
+                        break
+                if not os.path.exists(os.path.join(target_root, 'lang_list.txt')):
+                    valid = False
+            else:
+                valid = False
+
+            if not valid:
+                status_label.setText("⏳ Setting up offline models… (first run)")
+                app.processEvents()
+
+                # Copy the models (this takes a few seconds)
+                setup_default_models()
+
+                status_label.setText("✅ Models ready!")
+                app.processEvents()
+                time.sleep(0.5)   # brief pause so user sees the message
+
+        # Create main window (after models are ready)
         main_window = AssameseTypingApp()
         app.processEvents()
 
