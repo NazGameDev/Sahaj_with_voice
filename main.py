@@ -105,7 +105,7 @@ else:
 
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
-                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox)
+                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
 
@@ -1149,6 +1149,7 @@ class AssameseTypingApp(QMainWindow):
         self.translation_mode = "google"
         self.recording_active = False
         self.recording_worker = None
+        self.voice_progress = None
         self.loader_thread = AppLoaderThread(self.dictionary_file, resource_path("assamese_dictionary.txt"))
         self.loader_thread.finished_loading.connect(self.on_backend_loaded)
         self.loader_thread.error_signal.connect(self.show_engine_error)
@@ -1191,16 +1192,15 @@ class AssameseTypingApp(QMainWindow):
                 self.voice_btn.setEnabled(False)
                 self.voice_btn.setText("⏹️ Recording...")
                 self.remaining_seconds = 24
-                self.voice_timer_label.setText("⏱️ 24s")
+                self.voice_progress.setValue(100)
+                self.voice_progress.show()  # show progress bar
                 
-                # Create worker with max duration 24 seconds
                 self.recording_worker = voice_typing.VoiceRecorderWorker(max_duration=24)
                 self.recording_worker.recording_started.connect(self.on_recording_started)
                 self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
                 self.recording_worker.error.connect(self.on_voice_error)
                 self.recording_worker.start()
                 
-                # Start the countdown timer
                 self.countdown_timer.start()
                 
             except Exception as e:
@@ -1209,7 +1209,7 @@ class AssameseTypingApp(QMainWindow):
                 print(error_msg)
                 self.on_voice_error(error_msg)
         else:
-            # Stop recording (user clicked button again)
+            # Stop recording
             if self.recording_worker:
                 self.recording_worker.stop()
                 self.voice_btn.setEnabled(False)
@@ -1224,12 +1224,11 @@ class AssameseTypingApp(QMainWindow):
     def on_recording_stopped(self, audio_filepath):
         """Called when recording stops (either by user or timer)."""
         self.countdown_timer.stop()
+        self.voice_progress.hide()  # hide progress bar
         self.voice_btn.setEnabled(False)
         self.voice_btn.setText("⏳ Transcribing...")
-        self.voice_timer_label.setText("⏱️ Processing...")
         self.recording_worker = None
         
-        # Start transcription in a new thread
         self.transcriber_thread = voice_typing.VoiceTypingWorker(audio_filepath)
         self.transcriber_thread.finished.connect(self.on_voice_transcribed)
         self.transcriber_thread.error.connect(self.on_voice_error)
@@ -1237,7 +1236,8 @@ class AssameseTypingApp(QMainWindow):
 
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
-        self.voice_timer_label.setText("⏱️ 24s")  # reset label
+        self.voice_progress.hide()
+        self.voice_progress.setValue(100)  # reset for next time
         if text and text.strip():
             self.text_area.insertPlainText(text + " ")
             self.text_area.setFocus()
@@ -1250,20 +1250,23 @@ class AssameseTypingApp(QMainWindow):
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
         self.countdown_timer.stop()
-        self.voice_timer_label.setText("⏱️ 24s")
+        self.voice_progress.hide()
+        self.voice_progress.setValue(100)  # reset for next time
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Start Recording")
         self.recording_worker = None
 
     def update_countdown(self):
-        """Called every second to update the countdown label."""
+        """Called every second to update the countdown."""
         self.remaining_seconds -= 1
-        self.voice_timer_label.setText(f"⏱️ {self.remaining_seconds}s")
+        # Update progress bar: 100% at 24s, 0% at 0s
+        progress_value = int((self.remaining_seconds / 24) * 100)
+        self.voice_progress.setValue(progress_value)
         
         if self.remaining_seconds <= 0:
-            # Time's up – stop recording
             self.countdown_timer.stop()
+            self.voice_progress.hide()
             if self.recording_worker:
                 self.recording_worker.stop()
                 self.voice_btn.setEnabled(False)
@@ -1433,11 +1436,24 @@ class AssameseTypingApp(QMainWindow):
         """)
         self.voice_btn.clicked.connect(self.start_voice_typing)
 
-        self.voice_timer_label = QLabel("⏱️ 24s")
-        self.voice_timer_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        self.voice_timer_label.setStyleSheet("color: #0D6EFD;")
-        self.voice_timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.voice_timer_label.setFixedWidth(60)
+        # Progress bar for voice recording countdown
+        self.voice_progress = QProgressBar()
+        self.voice_progress.setRange(0, 100)
+        self.voice_progress.setValue(100)
+        self.voice_progress.setTextVisible(False)
+        self.voice_progress.setFixedHeight(6)
+        self.voice_progress.setStyleSheet("""
+            QProgressBar {
+                background-color: #444444;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background-color: #0D6EFD;
+                border-radius: 3px;
+            }
+        """)
+        self.voice_progress.hide()
 
         undo_btn = QPushButton("Undo")
         redo_btn = QPushButton("Redo")
@@ -1465,7 +1481,8 @@ class AssameseTypingApp(QMainWindow):
         toolbar.addWidget(self.phonetic_btn)
         toolbar.addWidget(self.engine_toggle)
         toolbar.addWidget(self.voice_btn)
-        toolbar.addWidget(self.voice_timer_label)
+        toolbar.addWidget(self.voice_progress)
+        # toolbar.addWidget(self.voice_timer_label)
         toolbar.addWidget(undo_btn)
         toolbar.addWidget(redo_btn)
         toolbar.addWidget(inc_font_btn)
