@@ -4,6 +4,7 @@ import sys
 import tempfile
 import wave
 import traceback
+import array
 import pyaudio
 import threading
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
@@ -14,9 +15,8 @@ def log_error(msg):
     try:
         # Rotate if file > 1 MB
         if os.path.exists(log_path) and os.path.getsize(log_path) > 1024 * 1024:
-            # Rename to .old or simply truncate
             with open(log_path, 'w', encoding='utf-8') as f:
-                f.write("")  # clear content
+                f.write("")
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
     except:
@@ -41,7 +41,6 @@ if getattr(sys, 'frozen', False):
     if os.path.exists(ffmpeg_dir) and os.listdir(ffmpeg_dir):
         os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
         log_error(f"Added FFmpeg to PATH: {ffmpeg_dir}")
-        # Also set TORCHAUDIO_USE_FFMPEG=1 to force torchaudio to use FFmpeg
         os.environ['TORCHAUDIO_USE_FFMPEG'] = '1'
     else:
         log_error(f"Warning: FFmpeg not found at {ffmpeg_dir}")
@@ -67,7 +66,7 @@ except Exception as e:
 class VoiceRecorderWorker(QThread):
     """Worker thread that records audio and emits the saved file path."""
     recording_started = pyqtSignal()
-    recording_stopped = pyqtSignal(str)  # emits path to saved WAV file
+    recording_stopped = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, max_duration=24):
@@ -99,7 +98,6 @@ class VoiceRecorderWorker(QThread):
             self.recording_started.emit()
             log_error("Recording started.")
 
-            # Keep the thread alive until stop is requested or max duration reached
             while not self._stop_requested:
                 elapsed = time.time() - self.start_time
                 if elapsed >= self.max_duration:
@@ -107,7 +105,6 @@ class VoiceRecorderWorker(QThread):
                     break
                 self.msleep(100)
 
-            # Stop recording
             self.is_recording = False
             if self.stream:
                 self.stream.stop_stream()
@@ -117,13 +114,12 @@ class VoiceRecorderWorker(QThread):
                 self.audio.terminate()
                 self.audio = None
 
-            # Save the audio to a WAV file
             if self.frames:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 temp_filename = temp_file.name
                 with wave.open(temp_filename, 'wb') as wf:
                     wf.setnchannels(1)
-                    wf.setsampwidth(2)  # 16-bit
+                    wf.setsampwidth(2)
                     wf.setframerate(16000)
                     wf.writeframes(b''.join(self.frames))
                 log_error(f"Recording saved to {temp_filename}")
@@ -142,18 +138,18 @@ class VoiceRecorderWorker(QThread):
         return (in_data, pyaudio.paContinue)
 
     def stop(self):
-        """Request to stop recording."""
         self._stop_requested = True
 
 
 class VoiceTypingWorker(QThread):
-    """Worker thread to transcribe audio."""
+    """Worker thread to transcribe audio with timeout support."""
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, audio_filepath):
+    def __init__(self, audio_filepath, timeout_seconds=45):
         super().__init__()
         self.audio_filepath = audio_filepath
+        self.timeout_seconds = timeout_seconds
 
     def run(self):
         try:
@@ -165,16 +161,14 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Audio file not found.")
                 return
 
-            # --- Check if the audio file has valid content ---
+            # Validate audio file
             try:
-                import wave
                 with wave.open(self.audio_filepath, 'rb') as wf:
                     n_frames = wf.getnframes()
                     if n_frames == 0:
                         self.error.emit("No audio recorded. Please check your microphone and try again.")
                         return
-                    # Also check file size
-                    if os.path.getsize(self.audio_filepath) < 1000:  # less than 1KB
+                    if os.path.getsize(self.audio_filepath) < 1000:
                         self.error.emit("Audio file is too small. Please record a longer clip.")
                         return
             except Exception as e:
@@ -182,25 +176,18 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Could not read the audio file. Please try again.")
                 return
 
-            # --- Chunk the audio into 12-second segments (with 2-second overlap) ---
             CHUNK_SECONDS = 12
             OVERLAP_SECONDS = 2
             SAMPLE_RATE = 16000
             CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
             OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
 
-            import array
             with wave.open(self.audio_filepath, 'rb') as wf:
-                n_channels = wf.getnchannels()
-                sampwidth = wf.getsampwidth()
-                framerate = wf.getframerate()
-                n_frames = wf.getnframes()
-                raw_data = wf.readframes(n_frames)
+                raw_data = wf.readframes(wf.getnframes())
 
             samples = array.array('h', raw_data)
             total_samples = len(samples)
 
-            # Disable progress bars and suppress stdout
             os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
             devnull = open(os.devnull, 'w')
             old_stdout = sys.stdout
@@ -219,13 +206,26 @@ class VoiceTypingWorker(QThread):
 
             full_text = []
             start_sample = 0
-            chunk_count = 0
+            start_time = time.time()
 
             while start_sample < total_samples:
+                # Check timeout
+                elapsed = time.time() - start_time
+                if elapsed > self.timeout_seconds:
+                    log_error(f"Transcription timed out after {elapsed:.1f}s")
+                    self.error.emit(
+                        f"Transcription is taking too long (over {self.timeout_seconds} seconds).\n\n"
+                        "This can happen on slower computers.\n"
+                        "Please try:\n"
+                        "• Recording a shorter sentence (10‑15 seconds)\n"
+                        "• Closing other applications to free up memory\n"
+                        "• Restarting the app and trying again..."                        
+                    )
+                    return
+
                 end_sample = min(start_sample + CHUNK_SAMPLES, total_samples)
                 chunk_samples = samples[start_sample:end_sample]
 
-                # Write chunk to a temporary WAV file
                 temp_chunk = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 temp_chunk_path = temp_chunk.name
                 with wave.open(temp_chunk_path, 'wb') as wf_chunk:
@@ -234,12 +234,10 @@ class VoiceTypingWorker(QThread):
                     wf_chunk.setframerate(SAMPLE_RATE)
                     wf_chunk.writeframes(chunk_samples.tobytes())
 
-                # Transcribe the chunk with a timeout
                 try:
                     chunk_text = transcriber.transcribe_rnnt(temp_chunk_path, "as")
                     if chunk_text and chunk_text.strip():
                         full_text.append(chunk_text.strip())
-                        chunk_count += 1
                     os.remove(temp_chunk_path)
                 except Exception as e:
                     log_error(f"Chunk transcription error: {e}")
@@ -248,19 +246,13 @@ class VoiceTypingWorker(QThread):
                     except:
                         pass
 
-                # Move to next chunk
                 start_sample += (CHUNK_SAMPLES - OVERLAP_SAMPLES)
 
-                if start_sample >= total_samples:
-                    break
-
-            # Clean up original audio file
             try:
                 os.remove(self.audio_filepath)
             except:
                 pass
 
-            # --- Check if we got any transcription ---
             if full_text:
                 combined = " ".join(full_text).strip()
                 self.finished.emit(combined)
