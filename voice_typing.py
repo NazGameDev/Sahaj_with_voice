@@ -165,6 +165,23 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Audio file not found.")
                 return
 
+            # --- Check if the audio file has valid content ---
+            try:
+                import wave
+                with wave.open(self.audio_filepath, 'rb') as wf:
+                    n_frames = wf.getnframes()
+                    if n_frames == 0:
+                        self.error.emit("No audio recorded. Please check your microphone and try again.")
+                        return
+                    # Also check file size
+                    if os.path.getsize(self.audio_filepath) < 1000:  # less than 1KB
+                        self.error.emit("Audio file is too small. Please record a longer clip.")
+                        return
+            except Exception as e:
+                log_error(f"Audio file validation error: {e}")
+                self.error.emit("Could not read the audio file. Please try again.")
+                return
+
             # --- Chunk the audio into 12-second segments (with 2-second overlap) ---
             CHUNK_SECONDS = 12
             OVERLAP_SECONDS = 2
@@ -172,7 +189,6 @@ class VoiceTypingWorker(QThread):
             CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
             OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
 
-            # Read the entire WAV file into a bytearray
             import array
             with wave.open(self.audio_filepath, 'rb') as wf:
                 n_channels = wf.getnchannels()
@@ -181,8 +197,7 @@ class VoiceTypingWorker(QThread):
                 n_frames = wf.getnframes()
                 raw_data = wf.readframes(n_frames)
 
-            # Convert raw bytes to a list of samples (assuming mono, 16-bit)
-            samples = array.array('h', raw_data)  # 'h' = signed short (16-bit)
+            samples = array.array('h', raw_data)
             total_samples = len(samples)
 
             # Disable progress bars and suppress stdout
@@ -194,6 +209,7 @@ class VoiceTypingWorker(QThread):
             sys.stderr = devnull
 
             try:
+                log_error("Initializing IndicTranscriber...")
                 transcriber = IndicTranscriber()
                 log_error("IndicTranscriber initialized.")
             finally:
@@ -203,6 +219,7 @@ class VoiceTypingWorker(QThread):
 
             full_text = []
             start_sample = 0
+            chunk_count = 0
 
             while start_sample < total_samples:
                 end_sample = min(start_sample + CHUNK_SAMPLES, total_samples)
@@ -213,16 +230,16 @@ class VoiceTypingWorker(QThread):
                 temp_chunk_path = temp_chunk.name
                 with wave.open(temp_chunk_path, 'wb') as wf_chunk:
                     wf_chunk.setnchannels(1)
-                    wf_chunk.setsampwidth(2)  # 16-bit
+                    wf_chunk.setsampwidth(2)
                     wf_chunk.setframerate(SAMPLE_RATE)
                     wf_chunk.writeframes(chunk_samples.tobytes())
 
-                # Transcribe the chunk
+                # Transcribe the chunk with a timeout
                 try:
                     chunk_text = transcriber.transcribe_rnnt(temp_chunk_path, "as")
                     if chunk_text and chunk_text.strip():
                         full_text.append(chunk_text.strip())
-                    # Clean up temp file
+                        chunk_count += 1
                     os.remove(temp_chunk_path)
                 except Exception as e:
                     log_error(f"Chunk transcription error: {e}")
@@ -230,12 +247,10 @@ class VoiceTypingWorker(QThread):
                         os.remove(temp_chunk_path)
                     except:
                         pass
-                    # Continue with next chunk
 
-                # Move to next chunk with overlap
+                # Move to next chunk
                 start_sample += (CHUNK_SAMPLES - OVERLAP_SAMPLES)
 
-                # If we have reached the end, break
                 if start_sample >= total_samples:
                     break
 
@@ -245,11 +260,12 @@ class VoiceTypingWorker(QThread):
             except:
                 pass
 
+            # --- Check if we got any transcription ---
             if full_text:
                 combined = " ".join(full_text).strip()
                 self.finished.emit(combined)
             else:
-                self.error.emit("Could not understand the audio. Please try again.")
+                self.error.emit("Could not understand the audio. Please try again with clearer speech.")
 
         except Exception as e:
             import traceback
