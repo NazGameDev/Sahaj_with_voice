@@ -27,13 +27,10 @@ if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS
     cache_dir = os.path.join(base_path, 'indic_asr_cache')
     if os.path.exists(cache_dir):
+        # Set both environment variables so the library finds the model
+        os.environ['HF_HUB_CACHE'] = cache_dir
         os.environ['INDIC_ASR_CACHE'] = cache_dir
         log_error(f"Using bundled ASR cache: {cache_dir}")
-        try:
-            contents = os.listdir(cache_dir)
-            log_error(f"Cache contents: {contents}")
-        except:
-            pass
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
     
