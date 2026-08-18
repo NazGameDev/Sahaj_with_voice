@@ -81,31 +81,37 @@ jobs:
         import shutil
         from indic_asr_onnx import IndicTranscriber
 
-        # Force download of the model (this saves it to huggingface cache)
+        # Force download of the model (saves to huggingface cache)
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
         # Locate the actual model folder inside huggingface cache
         hub_cache = os.path.expanduser('~/.cache/huggingface/hub')
-        if os.path.exists(hub_cache):
-            # Look for a folder starting with 'models--' that contains 'indic' or 'asr'
-            found = False
-            for item in os.listdir(hub_cache):
-                if item.startswith('models--') and ('indic' in item.lower() or 'asr' in item.lower()):
-                    src = os.path.join(hub_cache, item)
-                    if os.path.isdir(src):
-                        shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
-                        print(f'Copied ASR model from {src} to indic_asr_cache')
-                        found = True
-                        break
-            if not found:
-                raise FileNotFoundError('Could not find the ASR model in huggingface cache.')
-        else:
+        print(f'Searching in {hub_cache}')
+        if not os.path.exists(hub_cache):
             raise FileNotFoundError('Hugging Face cache directory not found.')
+
+        found = False
+        for item in os.listdir(hub_cache):
+            if item.startswith('models--') and ('indic' in item.lower() or 'asr' in item.lower()):
+                src = os.path.join(hub_cache, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
+                    print(f'Copied ASR model from {src} to indic_asr_cache')
+                    found = True
+                    break
+
+        if not found:
+            # List all items for debugging
+            print('Available items in cache:', os.listdir(hub_cache))
+            raise FileNotFoundError('Could not find ASR model in huggingface cache.')
 
         # Verify the cache was created
         if os.path.exists('indic_asr_cache') and os.listdir('indic_asr_cache'):
             print('indic_asr_cache is ready.')
+            # Print contents for debugging
+            for root, dirs, files in os.walk('indic_asr_cache'):
+                print(f'  {root}: {len(files)} files')
         else:
             raise RuntimeError('Failed to create indic_asr_cache or it is empty.')
         "@ > download_asr.py
