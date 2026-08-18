@@ -25,19 +25,17 @@ jobs:
     - name: Install Application Requirements
       run: |
         pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
-        pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers onnxruntime
+        pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers onnxruntime psutil
 
     - name: Download and extract FFmpeg for Windows
       run: |
         # Download FFmpeg shared build
         curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip -o ffmpeg.zip
         Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp
-        # Find the bin folder (the extracted folder name may vary)
+        # Find the bin folder
         $ffmpeg_dir = Get-ChildItem -Path ffmpeg_temp -Directory | Select-Object -First 1
         New-Item -ItemType Directory -Force -Path ffmpeg_bin
-        # Copy all DLLs from the bin folder to ffmpeg_bin
         Copy-Item -Path "$($ffmpeg_dir.FullName)\bin\*.dll" -Destination ffmpeg_bin\ -Force
-        # Also copy the ffmpeg.exe for reference (optional)
         Copy-Item -Path "$($ffmpeg_dir.FullName)\bin\ffmpeg.exe" -Destination ffmpeg_bin\ -Force
         Write-Host "FFmpeg DLLs copied to ffmpeg_bin"
 
@@ -83,36 +81,33 @@ jobs:
         import shutil
         from indic_asr_onnx import IndicTranscriber
 
-        # Force download of the model
+        # Force download of the model (this saves it to huggingface cache)
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
-        # Find the cache folder
-        src = os.path.expanduser('~/.cache/indic-asr-onnx')
-        if os.path.exists(src) and os.listdir(src):
-            shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
-            print(f'ASR model copied from {src} to indic_asr_cache')
+        # Locate the actual model folder inside huggingface cache
+        hub_cache = os.path.expanduser('~/.cache/huggingface/hub')
+        if os.path.exists(hub_cache):
+            # Look for a folder starting with 'models--' that contains 'indic' or 'asr'
+            found = False
+            for item in os.listdir(hub_cache):
+                if item.startswith('models--') and ('indic' in item.lower() or 'asr' in item.lower()):
+                    src = os.path.join(hub_cache, item)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
+                        print(f'Copied ASR model from {src} to indic_asr_cache')
+                        found = True
+                        break
+            if not found:
+                raise FileNotFoundError('Could not find the ASR model in huggingface cache.')
         else:
-            print('Warning: Could not find the cache folder. Trying alternative...')
-            alt = os.path.expanduser('~/.cache/huggingface/hub')
-            if os.path.exists(alt):
-                for item in os.listdir(alt):
-                    if 'indic' in item.lower() or 'asr' in item.lower() or 'onnx' in item.lower():
-                        full_path = os.path.join(alt, item)
-                        if os.path.isdir(full_path):
-                            shutil.copytree(full_path, 'indic_asr_cache', dirs_exist_ok=True)
-                            print(f'ASR model copied from {full_path} to indic_asr_cache')
-                            break
-                else:
-                    raise FileNotFoundError('Could not locate the ASR model cache folder.')
-            else:
-                raise FileNotFoundError('Could not locate the ASR model cache folder.')
+            raise FileNotFoundError('Hugging Face cache directory not found.')
 
-        # Verify that the cache was created
-        if not os.path.exists('indic_asr_cache') or not os.listdir('indic_asr_cache'):
-            raise RuntimeError('Failed to create indic_asr_cache or it is empty.')
-        else:
+        # Verify the cache was created
+        if os.path.exists('indic_asr_cache') and os.listdir('indic_asr_cache'):
             print('indic_asr_cache is ready.')
+        else:
+            raise RuntimeError('Failed to create indic_asr_cache or it is empty.')
         "@ > download_asr.py
         python download_asr.py
 
