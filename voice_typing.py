@@ -13,7 +13,6 @@ from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 def log_error(msg):
     log_path = os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')
     try:
-        # Rotate if file > 1 MB
         if os.path.exists(log_path) and os.path.getsize(log_path) > 1024 * 1024:
             with open(log_path, 'w', encoding='utf-8') as f:
                 f.write("")
@@ -27,18 +26,17 @@ if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS
     cache_dir = os.path.join(base_path, 'indic_asr_cache')
     if os.path.exists(cache_dir):
-        # Set both environment variables so the library finds the model
         os.environ['HF_HUB_CACHE'] = cache_dir
-        os.environ['INDIC_ASR_CACHE'] = cache_dir
+        os.environ['HF_HUB_OFFLINE'] = '1'   # force offline
         log_error(f"Using bundled ASR cache: {cache_dir}")
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
-    
+
     ffmpeg_dir = os.path.join(base_path, 'ffmpeg_bin')
     if os.path.exists(ffmpeg_dir) and os.listdir(ffmpeg_dir):
         os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-        log_error(f"Added FFmpeg to PATH: {ffmpeg_dir}")
         os.environ['TORCHAUDIO_USE_FFMPEG'] = '1'
+        log_error(f"Added FFmpeg to PATH: {ffmpeg_dir}")
     else:
         log_error(f"Warning: FFmpeg not found at {ffmpeg_dir}")
 
@@ -61,7 +59,6 @@ except Exception as e:
 
 
 class VoiceRecorderWorker(QThread):
-    """Worker thread that records audio and emits the saved file path."""
     recording_started = pyqtSignal()
     recording_stopped = pyqtSignal(str)
     error = pyqtSignal(str)
@@ -139,11 +136,10 @@ class VoiceRecorderWorker(QThread):
 
 
 class VoiceTypingWorker(QThread):
-    """Worker thread to transcribe audio with timeout support."""
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, audio_filepath, timeout_seconds=45):
+    def __init__(self, audio_filepath, timeout_seconds=30):
         super().__init__()
         self.audio_filepath = audio_filepath
         self.timeout_seconds = timeout_seconds
@@ -173,6 +169,25 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Could not read the audio file. Please try again.")
                 return
 
+            # Force offline mode (double‑safe)
+            os.environ['HF_HUB_OFFLINE'] = '1'
+
+            # Initialize transcriber (this will use the cache set earlier)
+            try:
+                log_error("Initializing IndicTranscriber...")
+                transcriber = IndicTranscriber()
+                log_error("IndicTranscriber initialized.")
+            except Exception as e:
+                log_error(f"Transcriber initialization failed: {e}")
+                self.error.emit(
+                    "Voice typing model could not be loaded.\n\n"
+                    "This might be because the model files are missing.\n"
+                    "Please check that the app was installed correctly.\n"
+                    "If this persists, try reinstalling the app."
+                )
+                return
+
+            # Chunk and transcribe (your existing code remains)
             CHUNK_SECONDS = 12
             OVERLAP_SECONDS = 2
             SAMPLE_RATE = 16000
@@ -185,17 +200,14 @@ class VoiceTypingWorker(QThread):
             samples = array.array('h', raw_data)
             total_samples = len(samples)
 
-            os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+            # Suppress stdout to hide progress bars
             devnull = open(os.devnull, 'w')
             old_stdout = sys.stdout
             old_stderr = sys.stderr
             sys.stdout = devnull
             sys.stderr = devnull
-
             try:
-                log_error("Initializing IndicTranscriber...")
-                transcriber = IndicTranscriber()
-                log_error("IndicTranscriber initialized.")
+                pass
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
@@ -206,7 +218,6 @@ class VoiceTypingWorker(QThread):
             start_time = time.time()
 
             while start_sample < total_samples:
-                # Check timeout
                 elapsed = time.time() - start_time
                 if elapsed > self.timeout_seconds:
                     log_error(f"Transcription timed out after {elapsed:.1f}s")
@@ -216,7 +227,7 @@ class VoiceTypingWorker(QThread):
                         "Please try:\n"
                         "• Recording a shorter sentence (10‑15 seconds)\n"
                         "• Closing other applications to free up memory\n"
-                        "• Restarting the app and trying again..."                        
+                        "• Restarting the app and trying again"
                     )
                     return
 
@@ -257,7 +268,6 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Could not understand the audio. Please try again with clearer speech.")
 
         except Exception as e:
-            import traceback
             error_msg = f"VoiceTypingWorker.run error: {str(e)}\n{traceback.format_exc()}"
             log_error(error_msg)
             self.error.emit(f"An error occurred during voice typing.\n\nError: {str(e)}\n\nPlease check the log file:\n{os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')}")
