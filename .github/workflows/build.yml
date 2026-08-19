@@ -29,10 +29,8 @@ jobs:
 
     - name: Download and extract FFmpeg for Windows
       run: |
-        # Download FFmpeg shared build
         curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip -o ffmpeg.zip
         Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_temp
-        # Find the bin folder
         $ffmpeg_dir = Get-ChildItem -Path ffmpeg_temp -Directory | Select-Object -First 1
         New-Item -ItemType Directory -Force -Path ffmpeg_bin
         Copy-Item -Path "$($ffmpeg_dir.FullName)\bin\*.dll" -Destination ffmpeg_bin\ -Force
@@ -81,11 +79,11 @@ jobs:
         import shutil
         from indic_asr_onnx import IndicTranscriber
 
-        # Force download of the model (saves to huggingface cache)
+        # Force download (saves to huggingface cache)
         transcriber = IndicTranscriber()
         print('ASR model downloaded successfully.')
 
-        # Locate the actual model folder inside huggingface cache
+        # Locate the model folder inside huggingface cache
         hub_cache = os.path.expanduser('~/.cache/huggingface/hub')
         print(f'Searching in {hub_cache}')
         if not os.path.exists(hub_cache):
@@ -96,20 +94,21 @@ jobs:
             if item.startswith('models--') and ('indic' in item.lower() or 'asr' in item.lower()):
                 src = os.path.join(hub_cache, item)
                 if os.path.isdir(src):
-                    shutil.copytree(src, 'indic_asr_cache', dirs_exist_ok=True)
-                    print(f'Copied ASR model from {src} to indic_asr_cache')
+                    # Copy the ENTIRE model folder (preserving its name) into indic_asr_cache
+                    target_dir = os.path.join('indic_asr_cache', item)
+                    os.makedirs('indic_asr_cache', exist_ok=True)
+                    shutil.copytree(src, target_dir, dirs_exist_ok=True)
+                    print(f'Copied ASR model from {src} to {target_dir}')
                     found = True
                     break
 
         if not found:
-            # List all items for debugging
             print('Available items in cache:', os.listdir(hub_cache))
             raise FileNotFoundError('Could not find ASR model in huggingface cache.')
 
-        # Verify the cache was created
+        # Verify
         if os.path.exists('indic_asr_cache') and os.listdir('indic_asr_cache'):
             print('indic_asr_cache is ready.')
-            # Print contents for debugging
             for root, dirs, files in os.walk('indic_asr_cache'):
                 print(f'  {root}: {len(files)} files')
         else:
