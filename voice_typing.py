@@ -168,23 +168,24 @@ class VoiceTypingWorker(QThread):
                 self.error.emit("Could not read the audio file. Please try again.")
                 return
 
-            # Force offline mode (double‑safe)
+            # Force offline mode
             os.environ['HF_HUB_OFFLINE'] = '1'
 
-            # Initialize transcriber (this will use the cache set earlier)
+            # Suppress stdout/stderr to avoid progress bar crashes in frozen app
+            devnull = open(os.devnull, 'w')
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            sys.stdout = devnull
+            sys.stderr = devnull
+
             try:
                 log_error("Initializing IndicTranscriber...")
                 transcriber = IndicTranscriber()
                 log_error("IndicTranscriber initialized.")
-            except Exception as e:
-                log_error(f"Transcriber initialization failed: {e}")
-                self.error.emit(
-                    "Voice typing model could not be loaded.\n\n"
-                    "This might be because the model files are missing.\n"
-                    "Please check that the app was installed correctly.\n"
-                    "If this persists, try reinstalling the app."
-                )
-                return
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                devnull.close()
 
             # Chunk and transcribe (your existing code remains)
             CHUNK_SECONDS = 12
