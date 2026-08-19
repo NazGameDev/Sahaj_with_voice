@@ -27,7 +27,6 @@ if getattr(sys, 'frozen', False):
     cache_dir = os.path.join(base_path, 'indic_asr_cache')
     if os.path.exists(cache_dir):
         os.environ['HF_HUB_CACHE'] = cache_dir
-        os.environ['HF_HUB_OFFLINE'] = '1'   # force offline
         log_error(f"Using bundled ASR cache: {cache_dir}")
     else:
         log_error(f"Warning: Bundled ASR cache not found at {cache_dir}")
