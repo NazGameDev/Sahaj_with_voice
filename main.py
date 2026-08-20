@@ -105,7 +105,7 @@ else:
 
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
-                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar)
+                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
 
@@ -150,7 +150,7 @@ QLabel#headerText {
     color: #2C3E50;
     padding: 15px 0px 5px 0px;
 }
-QTextEdit {
+QPlainTextEdit {
     font-family: {font_css};
     background-color: #FFFFFF;
     border: 2px solid #DEE2E6;
@@ -160,7 +160,7 @@ QTextEdit {
     selection-color: #FFFFFF;
     color: #333333;
 }
-QTextEdit:focus {
+QPlainTextEdit:focus {
     border: 2px solid #86B7FE;
 }
 QLineEdit {
@@ -303,7 +303,7 @@ QLabel#headerText {
     color: #EAEAEA;
     padding: 15px 0px 5px 0px;
 }
-QTextEdit {
+QPlainTextEdit {
     font-family: {font_css};
     background-color: #1E1E1E;
     color: #E0E0E0;
@@ -312,6 +312,9 @@ QTextEdit {
     padding: 12px;
     selection-background-color: #007ACC;
     selection-color: #FFFFFF;
+}
+QPlainTextEdit:focus {
+    border: 2px solid #86B7FE;
 }
 QLineEdit {
     border: 1px solid #555555;
@@ -625,7 +628,7 @@ class EnglishToAssameseWorker(QThread):
             self.translation_fetched.emit("Error")
 
 
-class PhoneticTextEdit(QTextEdit):
+class PhoneticTextEdit(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         editor_font = QFont()
