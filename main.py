@@ -1169,6 +1169,13 @@ class AssameseTypingApp(QMainWindow):
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
         self.text_area.textChanged.connect(lambda: self.spell_timer.start(2500))
         self.check_spelling()
+
+        # Autosave debounce timer (save 1 second after typing stops)
+        self.autosave_debounce = QTimer()
+        self.autosave_debounce.setSingleShot(True)
+        self.autosave_debounce.timeout.connect(self.save_text)
+        self.text_area.textChanged.connect(lambda: self.autosave_debounce.start(2000))
+
         # Countdown timer for voice recording
         self.remaining_seconds = 24
         self.countdown_timer = QTimer()
@@ -1829,39 +1836,46 @@ class AssameseTypingApp(QMainWindow):
     def save_text(self):
         text = self.text_area.toPlainText()
         try:
+            # Write to temporary file
             temp_file = self.autosave_file + ".tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
                 f.write(text)
+            # Atomic replace for main autosave
             os.replace(temp_file, self.autosave_file)
+            # Also write a plain backup copy (no atomic needed)
+            backup_file = self.autosave_file + ".bak"
+            with open(backup_file, "w", encoding="utf-8") as f:
+                f.write(text)
         except Exception:
             pass
 
     def load_autosave(self):
+        # Try main autosave file first
         if os.path.exists(self.autosave_file):
             try:
                 with open(self.autosave_file, "r", encoding="utf-8") as f:
                     content = f.read()
                     if content and content.strip():
                         self.text_area.setPlainText(content)
-            except (UnicodeDecodeError, IOError, ValueError):
-                QMessageBox.warning(self, "Autosave Error",
-                                    "The autosave file appears corrupted. Starting with an empty editor.")
-                backup = self.autosave_file + ".bak"
-                if os.path.exists(backup):
-                    try:
-                        with open(backup, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            if content.strip():
-                                self.text_area.setPlainText(content)
-                                QMessageBox.information(self, "Recovery", "Restored from backup.")
-                                os.remove(self.autosave_file)
-                                return
-                    except:
-                        pass
-                try:
-                    os.remove(self.autosave_file)
-                except:
-                    pass
+                        return
+            except:
+                pass
+
+        # If main file is empty/corrupted, try backup
+        backup_file = self.autosave_file + ".bak"
+        if os.path.exists(backup_file):
+            try:
+                with open(backup_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if content and content.strip():
+                        self.text_area.setPlainText(content)
+                        QMessageBox.information(self, "Recovery", "Restored from backup.")
+                        return
+            except:
+                pass
+
+        # If nothing works, start empty
+        self.text_area.setPlainText("")
 
     def copy_to_clipboard(self):
         clipboard = QApplication.clipboard()
