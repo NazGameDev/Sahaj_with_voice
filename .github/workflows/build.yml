@@ -116,11 +116,10 @@ jobs:
         "@ > download_asr.py
         python download_asr.py
 
-    - name: Obfuscate code with CodeEnigma (free protection)
+    - name: Obfuscate code with pyobfus (free protection, works with Python 3.10)
       run: |
-        pip install codeenigma
-        # Obfuscate all Python files except cache/build folders
-        codeenigma obfuscate --recursive . --exclude "offline_model_cache,indic_asr_cache,ffmpeg_bin,__pycache__,dist,build,venv,.git"
+        pip install pyobfus
+        pyobfus --recursive .
 
     - name: List cached files (debugging)
       run: |
