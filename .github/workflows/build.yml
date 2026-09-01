@@ -119,7 +119,8 @@ jobs:
     - name: Obfuscate code with pyobfus (free protection)
       run: |
         pip install pyobfus
-        pyobfus main.py voice_typing.py --exclude "offline_model_cache,indic_asr_cache,ffmpeg_bin,__pycache__,dist,build,.git"
+        pyobfus main.py
+        pyobfus voice_typing.py
 
     - name: List cached files (debugging)
       run: |
