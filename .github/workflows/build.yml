@@ -116,6 +116,12 @@ jobs:
         "@ > download_asr.py
         python download_asr.py
 
+    - name: Obfuscate code with CodeEnigma (free protection)
+      run: |
+        pip install codeenigma
+        # Obfuscate all Python files except cache/build folders
+        codeenigma obfuscate --recursive . --exclude "offline_model_cache,indic_asr_cache,ffmpeg_bin,__pycache__,dist,build,venv,.git"
+
     - name: List cached files (debugging)
       run: |
         dir offline_model_cache
