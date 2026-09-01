@@ -119,8 +119,10 @@ jobs:
     - name: Obfuscate code with pyobfus (free protection)
       run: |
         pip install pyobfus
-        pyobfus main.py
-        pyobfus voice_typing.py
+        pyobfus main.py -o main_obf.py
+        move main_obf.py main.py
+        pyobfus voice_typing.py -o voice_typing_obf.py
+        move voice_typing_obf.py voice_typing.py
 
     - name: List cached files (debugging)
       run: |
