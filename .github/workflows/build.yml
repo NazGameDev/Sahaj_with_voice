@@ -116,10 +116,10 @@ jobs:
         "@ > download_asr.py
         python download_asr.py
 
-    - name: Obfuscate code with pyobfus (free protection, works with Python 3.10)
+    - name: Obfuscate code with pyobfus (free protection)
       run: |
         pip install pyobfus
-        pyobfus --recursive .
+        pyobfus main.py voice_typing.py --exclude "offline_model_cache,indic_asr_cache,ffmpeg_bin,__pycache__,dist,build,.git"
 
     - name: List cached files (debugging)
       run: |
