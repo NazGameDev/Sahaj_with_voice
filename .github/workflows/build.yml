@@ -116,13 +116,14 @@ jobs:
         "@ > download_asr.py
         python download_asr.py
 
-    - name: Obfuscate code with pyobfus (free protection)
+    - name: Obfuscate code with python-obfuscator (free, no line limit)
       run: |
-        pip install pyobfus
-        pyobfus main.py -o main_obf.py
-        move main_obf.py main.py
-        pyobfus voice_typing.py -o voice_typing_obf.py
-        move voice_typing_obf.py voice_typing.py
+        pip install python-obfuscator
+        # Obfuscate main.py
+        pyobfuscate -i main.py -o main.py
+        # Obfuscate voice_typing.py
+        pyobfuscate -i voice_typing.py -o voice_typing.py
+        # If you have other source files (e.g., licensing.py), add them here
 
     - name: List cached files (debugging)
       run: |
