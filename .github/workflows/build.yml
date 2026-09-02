@@ -116,14 +116,6 @@ jobs:
         "@ > download_asr.py
         python download_asr.py
 
-    - name: Obfuscate code with python-obfuscator (free, no line limit)
-      run: |
-        pip install python-obfuscator
-        pyobfuscate --input main.py --stdout > main_obf.py
-        move main_obf.py main.py
-        pyobfuscate --input voice_typing.py --stdout > voice_typing_obf.py
-        move voice_typing_obf.py voice_typing.py
-
     - name: List cached files (debugging)
       run: |
         dir offline_model_cache
@@ -131,9 +123,9 @@ jobs:
         if (Test-Path indic_asr_cache) { dir indic_asr_cache } else { Write-Host "indic_asr_cache not found" }
         if (Test-Path ffmpeg_bin) { dir ffmpeg_bin } else { Write-Host "ffmpeg_bin not found" }
 
-    - name: Build Executable via PyInstaller
+    - name: Build Executable via PyInstaller with encryption
       run: |
-        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;ffmpeg_bin" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
+        pyinstaller --noconfirm --onedir --windowed --key "SahajSecureKey2024" --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;ffmpeg_bin" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
 
     - name: Zip Final Build Folder
       run: |
