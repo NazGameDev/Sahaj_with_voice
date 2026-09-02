@@ -24,9 +24,8 @@ jobs:
 
     - name: Install Application Requirements
       run: |
-        pip install PyQt6 requests ai4bharat-transliteration scikit-learn
+        pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
         pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers onnxruntime psutil
-        pip install nuitka
 
     - name: Download and extract FFmpeg for Windows
       run: |
@@ -124,35 +123,13 @@ jobs:
         if (Test-Path indic_asr_cache) { dir indic_asr_cache } else { Write-Host "indic_asr_cache not found" }
         if (Test-Path ffmpeg_bin) { dir ffmpeg_bin } else { Write-Host "ffmpeg_bin not found" }
 
-    - name: Build with Nuitka (compiles to native machine code)
+    - name: Build Executable via PyInstaller
       run: |
-        nuitka --standalone --enable-plugin=pyqt6 --output-dir=build_output main.py
+        pyinstaller --noconfirm --onedir --windowed --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;ffmpeg_bin" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
 
-    - name: Copy data files into the build folder
+    - name: Zip Final Build Folder
       run: |
-        # Nuitka outputs to build_output/main.dist/
-        $build_folder = "build_output/main.dist"
-        # Create necessary subfolders
-        New-Item -ItemType Directory -Force -Path "$build_folder\ai4bharat\transliteration\transformer\models\en2indic"
-        # Copy large folders
-        Copy-Item -Recurse offline_model_cache "$build_folder\offline_model_cache"
-        Copy-Item -Recurse indic_asr_cache "$build_folder\indic_asr_cache"
-        Copy-Item -Recurse ffmpeg_bin "$build_folder\ffmpeg_bin"
-        # Copy individual files
-        Copy-Item assamese_dictionary.txt "$build_folder\"
-        Copy-Item dictionary.json "$build_folder\"
-        Copy-Item Nirmala.ttf "$build_folder\"
-        Copy-Item Banikanta.ttf "$build_folder\"
-        Copy-Item header_logo.png "$build_folder\"
-        Copy-Item header_icon.png "$build_folder\"
-        Copy-Item splash_animation.gif "$build_folder\"
-        Copy-Item donate_qr.png "$build_folder\"
-        Copy-Item lang_list.txt "$build_folder\ai4bharat\transliteration\transformer\models\en2indic\"
-        Write-Host "Data files copied successfully."
-
-    - name: Zip the entire build folder
-      run: |
-        Compress-Archive -Path build_output\main.dist\* -DestinationPath Sahaj_v1_1_Offline.zip
+        Compress-Archive -Path dist/main/* -DestinationPath Sahaj_v1_1_Offline.zip
 
     - name: Upload Compressed Executable Artifact
       uses: actions/upload-artifact@v4
