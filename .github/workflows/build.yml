@@ -119,11 +119,10 @@ jobs:
     - name: Obfuscate code with python-obfuscator (free, no line limit)
       run: |
         pip install python-obfuscator
-        pyobfuscate --input main.py --output main_obf.py
+        pyobfuscate --input main.py --stdout > main_obf.py
         move main_obf.py main.py
-        pyobfuscate --input voice_typing.py --output voice_typing_obf.py
+        pyobfuscate --input voice_typing.py --stdout > voice_typing_obf.py
         move voice_typing_obf.py voice_typing.py
-        # Add other .py files here if needed
 
     - name: List cached files (debugging)
       run: |
