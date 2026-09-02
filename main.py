@@ -107,7 +107,23 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
                              QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
-from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor, QPainter)
+from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor, QPainter, QPen)
+
+import traceback
+import sys
+
+def log_exception(exc_type, exc_value, exc_tb):
+    """Log any unhandled exception to a file."""
+    log_path = os.path.join(os.path.expanduser('~'), 'sahaj_crash.log')
+    with open(log_path, 'w', encoding='utf-8') as f:
+        f.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+    # Also print to console
+    print("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+    # Call the default handler
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+# Install the exception hook
+sys.excepthook = log_exception
 
 class CircularProgress(QWidget):
     """A circular progress bar with a text label in the center."""
@@ -126,21 +142,21 @@ class CircularProgress(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(4, 4, -4, -4)
-        # background circle
-        painter.setBrush(Qt.GlobalColor.transparent)
-        painter.setPen(QPen(QColor("#444444"), 4))
-        painter.drawEllipse(rect)
-        # progress arc
-        if self._value > 0:
-            angle = 360 * (self._value / 100)
-            painter.setPen(QPen(QColor("#0D6EFD"), 4))
-            painter.drawArc(rect, 90 * 16, -angle * 16)
-        # center text
-        painter.setPen(QPen(QColor("white"), 1))
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
+        try:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = self.rect().adjusted(4, 4, -4, -4)
+            painter.setBrush(Qt.GlobalColor.transparent)
+            painter.setPen(QPen(QColor("#444444"), 4))
+            painter.drawEllipse(rect)
+            if self._value > 0:
+                angle = 360 * (self._value / 100)
+                painter.setPen(QPen(QColor("#0D6EFD"), 4))
+                painter.drawArc(rect, 90 * 16, -angle * 16)
+            painter.setPen(QPen(QColor("white"), 1))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
+        except Exception as e:
+            print(f"CircularProgress paint error: {e}")
 
 class AudioVisualizer(QWidget):
     """A simple waveform visualizer."""
@@ -162,17 +178,20 @@ class AudioVisualizer(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setPen(QPen(QColor("#0D6EFD"), 3))
-        w = self.width()
-        h = self.height()
-        num_bars = len(self.buffer)
-        bar_width = w / num_bars
-        for i, amp in enumerate(self.buffer):
-            bar_height = int(amp * (h - 10))
-            x = i * bar_width
-            y = (h - bar_height) // 2
-            painter.drawRect(x, y, max(1, bar_width - 2), max(1, bar_height))
+        try:
+            painter = QPainter(self)
+            painter.setPen(QPen(QColor("#0D6EFD"), 3))
+            w = self.width()
+            h = self.height()
+            num_bars = len(self.buffer)
+            bar_width = w / num_bars
+            for i, amp in enumerate(self.buffer):
+                bar_height = int(amp * (h - 10))
+                x = i * bar_width
+                y = (h - bar_height) // 2
+                painter.drawRect(x, y, max(1, bar_width - 2), max(1, bar_height))
+        except Exception as e:
+            print(f"AudioVisualizer paint error: {e}")
 
 def get_user_data_dir():
     """Return a writable folder inside %LOCALAPPDATA% for this app."""
@@ -2098,6 +2117,8 @@ def resource_path(relative_path):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Install exception hook for GUI crashes
+    sys.excepthook = log_exception
     app.setStyle("Fusion")
 
     clipboard = QApplication.clipboard()
