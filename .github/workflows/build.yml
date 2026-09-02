@@ -126,23 +126,33 @@ jobs:
 
     - name: Build with Nuitka (compiles to native machine code)
       run: |
-        nuitka --standalone --enable-plugin=pyqt6 --include-data-dir=offline_model_cache=offline_model_cache --include-data-dir=indic_asr_cache=indic_asr_cache --include-data-dir=ffmpeg_bin=ffmpeg_bin --include-data-file=assamese_dictionary.txt=assamese_dictionary.txt --include-data-file=dictionary.json=dictionary.json --include-data-file=Nirmala.ttf=Nirmala.ttf --include-data-file=Banikanta.ttf=Banikanta.ttf --include-data-file=header_logo.png=header_logo.png --include-data-file=header_icon.png=header_icon.png --include-data-file=splash_animation.gif=splash_animation.gif --include-data-file=donate_qr.png=donate_qr.png --include-data-file=lang_list.txt=ai4bharat/transliteration/transformer/models/en2indic/lang_list.txt --output-dir=dist main.py
+        nuitka --standalone --enable-plugin=pyqt6 --output-dir=build_output main.py
 
-    - name: Verify build output
+    - name: Copy data files into the build folder
       run: |
-        # Show what was produced
-        dir dist
-        # If there is a .exe directly, we'll find it
-        if (Test-Path dist\main.exe) {
-          Write-Host "Found main.exe"
-        } else {
-          Write-Host "Checking for .exe in subfolders"
-          dir dist -Recurse | Where-Object { $_.Extension -eq ".exe" }
-        }
+        # Nuitka outputs to build_output/main.dist/
+        $build_folder = "build_output/main.dist"
+        # Create necessary subfolders
+        New-Item -ItemType Directory -Force -Path "$build_folder\ai4bharat\transliteration\transformer\models\en2indic"
+        # Copy large folders
+        Copy-Item -Recurse offline_model_cache "$build_folder\offline_model_cache"
+        Copy-Item -Recurse indic_asr_cache "$build_folder\indic_asr_cache"
+        Copy-Item -Recurse ffmpeg_bin "$build_folder\ffmpeg_bin"
+        # Copy individual files
+        Copy-Item assamese_dictionary.txt "$build_folder\"
+        Copy-Item dictionary.json "$build_folder\"
+        Copy-Item Nirmala.ttf "$build_folder\"
+        Copy-Item Banikanta.ttf "$build_folder\"
+        Copy-Item header_logo.png "$build_folder\"
+        Copy-Item header_icon.png "$build_folder\"
+        Copy-Item splash_animation.gif "$build_folder\"
+        Copy-Item donate_qr.png "$build_folder\"
+        Copy-Item lang_list.txt "$build_folder\ai4bharat\transliteration\transformer\models\en2indic\"
+        Write-Host "Data files copied successfully."
 
-    - name: Zip the entire build folder (includes all dependencies)
+    - name: Zip the entire build folder
       run: |
-        Compress-Archive -Path dist\* -DestinationPath Sahaj_v1_1_Offline.zip
+        Compress-Archive -Path build_output\main.dist\* -DestinationPath Sahaj_v1_1_Offline.zip
 
     - name: Upload Compressed Executable Artifact
       uses: actions/upload-artifact@v4
