@@ -24,8 +24,9 @@ jobs:
 
     - name: Install Application Requirements
       run: |
-        pip install PyQt6 requests ai4bharat-transliteration pyinstaller scikit-learn
+        pip install PyQt6 requests ai4bharat-transliteration scikit-learn
         pip install indic-asr-onnx pyaudio huggingface_hub transformers tokenizers onnxruntime psutil
+        pip install nuitka
 
     - name: Download and extract FFmpeg for Windows
       run: |
@@ -123,13 +124,21 @@ jobs:
         if (Test-Path indic_asr_cache) { dir indic_asr_cache } else { Write-Host "indic_asr_cache not found" }
         if (Test-Path ffmpeg_bin) { dir ffmpeg_bin } else { Write-Host "ffmpeg_bin not found" }
 
-    - name: Build Executable via PyInstaller with encryption
+    - name: Build with Nuitka (compiles to native machine code)
       run: |
-        pyinstaller --noconfirm --onedir --windowed --key "SahajSecureKey2024" --icon icon.ico --add-data "assamese_dictionary.txt;." --add-data "dictionary.json;." --add-data "Nirmala.ttf;." --add-data "Banikanta.ttf;." --add-data "header_logo.png;." --add-data "header_icon.png;." --add-data "splash_animation.gif;." --add-data "donate_qr.png;." --add-data "lang_list.txt;ai4bharat/transliteration/transformer/models/en2indic" --add-data "offline_model_cache;ai4bharat/transliteration/transformer/models/en2indic/v1.0" --add-data "indic_asr_cache;indic_asr_cache" --add-data "ffmpeg_bin;ffmpeg_bin" --collect-all fairseq --collect-all hydra --collect-all omegaconf --collect-all sklearn --collect-all torch --collect-all numpy --collect-all onnxruntime --collect-all huggingface_hub --collect-all transformers --collect-all tokenizers --collect-all indic_asr_onnx --collect-all torchaudio --collect-all torchcodec main.py
+        nuitka --standalone --onefile --windows-disable-console --enable-plugin=pyqt6 --include-data-dir=offline_model_cache=offline_model_cache --include-data-dir=indic_asr_cache=indic_asr_cache --include-data-dir=ffmpeg_bin=ffmpeg_bin --include-data-file=assamese_dictionary.txt=assamese_dictionary.txt --include-data-file=dictionary.json=dictionary.json --include-data-file=Nirmala.ttf=Nirmala.ttf --include-data-file=Banikanta.ttf=Banikanta.ttf --include-data-file=header_logo.png=header_logo.png --include-data-file=header_icon.png=header_icon.png --include-data-file=splash_animation.gif=splash_animation.gif --include-data-file=donate_qr.png=donate_qr.png --include-data-file=lang_list.txt=ai4bharat/transliteration/transformer/models/en2indic/lang_list.txt --output-dir=dist main.py
 
-    - name: Zip Final Build Folder
+    - name: Move built EXE to root (if needed)
       run: |
-        Compress-Archive -Path dist/main/* -DestinationPath Sahaj_v1_1_Offline.zip
+        # Nuitka outputs in dist/main.dist or dist/main.exe depending on --onefile
+        # For --onefile, the .exe is in dist/main.exe
+        # We'll rename it and put it in a known location
+        mkdir final
+        move dist\main.exe final\Sahaj_v1_1_Offline.exe
+
+    - name: Zip Final Build
+      run: |
+        Compress-Archive -Path final\* -DestinationPath Sahaj_v1_1_Offline.zip
 
     - name: Upload Compressed Executable Artifact
       uses: actions/upload-artifact@v4
