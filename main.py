@@ -1287,7 +1287,11 @@ class AssameseTypingApp(QMainWindow):
                 self.voice_progress.setText("24s")
                 self.voice_progress.show()
                 self.visualizer.show()
-                
+                # Force UI update
+                self.voice_progress.update()
+                self.visualizer.update()
+                QApplication.processEvents()
+
                 self.recording_worker = voice_typing.VoiceRecorderWorker(max_duration=24)
                 # Connect the visualizer to the worker's amplitude signal
                 self.recording_worker.amplitude_changed.connect(self.visualizer.add_sample)
@@ -1295,9 +1299,9 @@ class AssameseTypingApp(QMainWindow):
                 self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
                 self.recording_worker.error.connect(self.on_voice_error)
                 self.recording_worker.start()
-                
+
                 self.countdown_timer.start()
-                
+
             except Exception as e:
                 import traceback
                 error_msg = f"start_voice_typing error: {e}\n{traceback.format_exc()}"
