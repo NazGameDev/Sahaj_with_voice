@@ -152,6 +152,9 @@ class CircularProgress(QWidget):
                 angle = 360 * (self._value / 100)
                 painter.setPen(QPen(QColor("#0D6EFD"), 3))
                 painter.drawArc(rect, 90 * 16, -angle * 16)
+            font = painter.font()
+            font.setPointSize(14)
+            painter.setFont(font)
             painter.setPen(QPen(QColor("white"), 1))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
         except Exception as e:
@@ -1291,6 +1294,8 @@ class AssameseTypingApp(QMainWindow):
                 self.voice_progress.update()
                 self.visualizer.update()
                 QApplication.processEvents()
+                self.voice_progress.repaint()
+                self.visualizer.repaint()
 
                 self.recording_worker = voice_typing.VoiceRecorderWorker(max_duration=24)
                 # Connect the visualizer to the worker's amplitude signal
@@ -1299,7 +1304,6 @@ class AssameseTypingApp(QMainWindow):
                 self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
                 self.recording_worker.error.connect(self.on_voice_error)
                 self.recording_worker.start()
-
                 self.countdown_timer.start()
 
             except Exception as e:
@@ -1349,7 +1353,7 @@ class AssameseTypingApp(QMainWindow):
             cursor.movePosition(cursor.MoveOperation.End)
             self.text_area.setTextCursor(cursor)
         self.voice_btn.setEnabled(True)
-        self.voice_btn.setText("🎤 Start Recording")
+        self.voice_btn.setText("🎤 Voice Typing")
 
     def on_voice_error(self, error_message):
         """Handle transcription errors."""
@@ -1361,7 +1365,7 @@ class AssameseTypingApp(QMainWindow):
         self.voice_progress.setText("24s")
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
-        self.voice_btn.setText("🎤 Start Recording")
+        self.voice_btn.setText("🎤 Voice Typing")
         self.recording_worker = None
 
     def update_countdown(self):
@@ -1576,6 +1580,7 @@ class AssameseTypingApp(QMainWindow):
         toolbar.addWidget(self.voice_btn)
         toolbar.addWidget(self.voice_progress)
         self.visualizer = AudioVisualizer()
+        self.visualizer.setStyleSheet("background-color: rgba(255,255,255,0.1); border-radius: 4px;")
         self.visualizer.hide()
         toolbar.addWidget(self.visualizer)
         # toolbar.addWidget(self.voice_timer_label)
