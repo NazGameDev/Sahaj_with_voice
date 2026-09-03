@@ -97,7 +97,8 @@ jobs:
                     # Copy the ENTIRE model folder (preserving its name) into indic_asr_cache
                     target_dir = os.path.join('indic_asr_cache', item)
                     os.makedirs('indic_asr_cache', exist_ok=True)
-                    shutil.copytree(src, target_dir, dirs_exist_ok=True)
+                    # Use shutil.copytree with copy2 to follow symlinks and avoid missing files
+                    shutil.copytree(src, target_dir, dirs_exist_ok=True, copy_function=shutil.copy2, ignore_dangling_symlinks=True)
                     print(f'Copied ASR model from {src} to {target_dir}')
                     found = True
                     break
