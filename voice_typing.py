@@ -131,12 +131,11 @@ class VoiceRecorderWorker(QThread):
         if self.is_recording:
             self.frames.append(in_data)
             # Compute RMS for visualizer
-            # Convert bytes to int16 samples
             samples = array.array('h', in_data)
-            rms = math.sqrt(sum(s**2 for s in samples) / len(samples))
-            # Normalize to 0-1 range (max RMS for 16-bit audio is ~32767)
-            normalized = min(1.0, rms / 15000)  # 15000 is a typical max for loud speech
-            self.amplitude_changed.emit(normalized)
+            if samples:
+                rms = math.sqrt(sum(s**2 for s in samples) / len(samples))
+                normalized = min(1.0, rms / 15000)
+                self.amplitude_changed.emit(normalized)
         return (in_data, pyaudio.paContinue)
 
     def stop(self):
