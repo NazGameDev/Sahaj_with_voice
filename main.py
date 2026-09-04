@@ -107,92 +107,8 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
                              QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
-from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor, QPainter, QPen)
+from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
 
-import traceback
-import sys
-
-def log_exception(exc_type, exc_value, exc_tb):
-    """Log any unhandled exception to a file."""
-    log_path = os.path.join(os.path.expanduser('~'), 'sahaj_crash.log')
-    with open(log_path, 'w', encoding='utf-8') as f:
-        f.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
-    # Also print to console
-    print("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
-    # Call the default handler
-    sys.__excepthook__(exc_type, exc_value, exc_tb)
-
-# Install the exception hook
-sys.excepthook = log_exception
-
-class CircularProgress(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._value = 100
-        self._text = "24s"
-        self.setFixedSize(50, 50)  # smaller
-
-    def setValue(self, value):
-        self._value = max(0, min(100, value))
-        self.update()
-
-    def setText(self, text):
-        self._text = text
-        self.update()
-
-    def paintEvent(self, event):
-        try:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            rect = self.rect().adjusted(3, 3, -3, -3)
-            painter.setBrush(Qt.GlobalColor.transparent)
-            painter.setPen(QPen(QColor("#444444"), 3))
-            painter.drawEllipse(rect)
-            if self._value > 0:
-                angle = 360 * (self._value / 100)
-                painter.setPen(QPen(QColor("#0D6EFD"), 3))
-                painter.drawArc(rect, 90 * 16, -angle * 16)
-            font = painter.font()
-            font.setPointSize(14)
-            painter.setFont(font)
-            painter.setPen(QPen(QColor("white"), 1))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._text)
-        except Exception as e:
-            print(f"CircularProgress paint error: {e}")
-
-class AudioVisualizer(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(25)
-        self.setMinimumWidth(120)
-        self.buffer = [0] * 40
-        self.setStyleSheet("background-color: transparent;")
-
-    def add_sample(self, amplitude):
-        self.buffer.append(amplitude)
-        if len(self.buffer) > 40:
-            self.buffer.pop(0)
-        self.update()
-
-    def clear(self):
-        self.buffer = [0] * 40
-        self.update()
-
-    def paintEvent(self, event):
-        try:
-            painter = QPainter(self)
-            painter.setPen(QPen(QColor("#0D6EFD"), 2))
-            w = self.width()
-            h = self.height()
-            num_bars = len(self.buffer)
-            bar_width = w / num_bars
-            for i, amp in enumerate(self.buffer):
-                bar_height = int(amp * (h - 6))
-                x = i * bar_width
-                y = (h - bar_height) // 2
-                painter.drawRect(x, y, max(1, bar_width - 1), max(1, bar_height))
-        except Exception as e:
-            print(f"AudioVisualizer paint error: {e}")
 
 def get_user_data_dir():
     """Return a writable folder inside %LOCALAPPDATA% for this app."""
@@ -1254,7 +1170,7 @@ class AssameseTypingApp(QMainWindow):
         self.spell_timer = QTimer()
         self.spell_timer.setSingleShot(True)
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
-        self.text_area.textChanged.connect(lambda: self.spell_timer.start(2500))
+        self.text_area.textChanged.connect(lambda: self.spell_timer.start(5000))
         self.check_spelling()
 
         # Autosave debounce timer (save 1 second after typing stops)
@@ -1279,30 +1195,19 @@ class AssameseTypingApp(QMainWindow):
             self.translation_mode = "offline"
 
     def start_voice_typing(self):
-        """Toggle voice recording on/off."""
         if not hasattr(self, 'recording_worker') or self.recording_worker is None:
-            # Start recording
             try:
                 self.voice_btn.setEnabled(False)
                 self.voice_btn.setText("⏹️ Recording...")
                 self.remaining_seconds = 24
                 self.voice_progress.setValue(100)
-                self.voice_progress.setText("24s")
                 self.voice_progress.show()
-                self.visualizer.show()
-                # Force UI update
-                self.voice_progress.update()
-                self.visualizer.update()
-                QApplication.processEvents()
-                self.voice_progress.repaint()
-                self.visualizer.repaint()
 
                 self.recording_worker = voice_typing.VoiceRecorderWorker(max_duration=24)
-                # Connect the visualizer to the worker's amplitude signal
-                self.recording_worker.amplitude_changed.connect(self.visualizer.add_sample)
                 self.recording_worker.recording_started.connect(self.on_recording_started)
                 self.recording_worker.recording_stopped.connect(self.on_recording_stopped)
                 self.recording_worker.error.connect(self.on_voice_error)
+                self.recording_worker.level_update.connect(self.update_voice_level)  # <-- new
                 self.recording_worker.start()
                 self.countdown_timer.start()
 
@@ -1327,9 +1232,8 @@ class AssameseTypingApp(QMainWindow):
     def on_recording_stopped(self, audio_filepath):
         """Called when recording stops (either by user or timer)."""
         self.countdown_timer.stop()
-        self.voice_progress.hide()
-        self.visualizer.hide()  # hide progress bar
-        self.visualizer.clear()
+        self.voice_progress.setValue(100)
+        self.voice_progress.hide()  # hide progress bar
         self.voice_btn.setEnabled(False)
         self.voice_btn.setText("⏳ Transcribing...")
         self.recording_worker = None
@@ -1342,10 +1246,7 @@ class AssameseTypingApp(QMainWindow):
     def on_voice_transcribed(self, text):
         """Handle successful transcription."""
         self.voice_progress.hide()
-        self.visualizer.hide()
-        self.visualizer.clear()
         self.voice_progress.setValue(100)  # reset for next time
-        self.voice_progress.setText("24s")
         if text and text.strip():
             self.text_area.insertPlainText(text + " ")
             self.text_area.setFocus()
@@ -1359,10 +1260,7 @@ class AssameseTypingApp(QMainWindow):
         """Handle transcription errors."""
         self.countdown_timer.stop()
         self.voice_progress.hide()
-        self.visualizer.hide()
-        self.visualizer.clear()
-        self.voice_progress.setValue(100)
-        self.voice_progress.setText("24s")
+        self.voice_progress.setValue(100)  # reset for next time
         QMessageBox.critical(self, "Voice Typing Error", error_message)
         self.voice_btn.setEnabled(True)
         self.voice_btn.setText("🎤 Voice Typing")
@@ -1374,7 +1272,6 @@ class AssameseTypingApp(QMainWindow):
         # Update progress bar: 100% at 24s, 0% at 0s
         progress_value = int((self.remaining_seconds / 24) * 100)
         self.voice_progress.setValue(progress_value)
-        self.voice_progress.setText(f"{self.remaining_seconds}s")
         
         if self.remaining_seconds <= 0:
             self.countdown_timer.stop()
@@ -1382,7 +1279,17 @@ class AssameseTypingApp(QMainWindow):
             if self.recording_worker:
                 self.recording_worker.stop()
                 self.voice_btn.setEnabled(False)
-                self.voice_btn.setText("⏹️ Stopping...")    
+                self.voice_btn.setText("⏹️ Stopping...")
+
+    def update_voice_level(self, rms):
+        """Update progress bar to show audio level."""
+        if self.voice_progress.isVisible():
+            # Scale to 0-100 (we want it to bounce like a VU meter)
+            value = int(rms * 100)
+            self.voice_progress.setValue(value)
+        else:
+            self.voice_progress.show()
+            self.voice_progress.setValue(0)    
 
     def on_backend_loaded(self, spell_tool, dictionary, xlit_engine):
         self.spell_tool = spell_tool
@@ -1548,8 +1455,23 @@ class AssameseTypingApp(QMainWindow):
         """)
         self.voice_btn.clicked.connect(self.start_voice_typing)
 
-        # Circular progress bar for voice recording countdown
-        self.voice_progress = CircularProgress()
+        # Progress bar for voice recording countdown
+        self.voice_progress = QProgressBar()
+        self.voice_progress.setRange(0, 100)
+        self.voice_progress.setValue(100)
+        self.voice_progress.setTextVisible(False)
+        self.voice_progress.setFixedHeight(6)
+        self.voice_progress.setStyleSheet("""
+            QProgressBar {
+                background-color: #444444;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background-color: #0D6EFD;
+                border-radius: 3px;
+            }
+        """)
         self.voice_progress.hide()
 
         undo_btn = QPushButton("Undo")
@@ -1579,10 +1501,6 @@ class AssameseTypingApp(QMainWindow):
         toolbar.addWidget(self.engine_toggle)
         toolbar.addWidget(self.voice_btn)
         toolbar.addWidget(self.voice_progress)
-        self.visualizer = AudioVisualizer()
-        self.visualizer.setStyleSheet("background-color: rgba(255,255,255,0.1); border-radius: 4px;")
-        self.visualizer.hide()
-        toolbar.addWidget(self.visualizer)
         # toolbar.addWidget(self.voice_timer_label)
         toolbar.addWidget(undo_btn)
         toolbar.addWidget(redo_btn)
@@ -1746,7 +1664,7 @@ class AssameseTypingApp(QMainWindow):
             return
 
         full_text = self.text_area.toPlainText()
-        MAX_CHECK_LEN = 4000
+        MAX_CHECK_LEN = 2000
         if len(full_text) > MAX_CHECK_LEN:
             cursor = self.text_area.textCursor()
             pos = cursor.position()
@@ -2129,8 +2047,6 @@ def resource_path(relative_path):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # Install exception hook for GUI crashes
-    sys.excepthook = log_exception
     app.setStyle("Fusion")
 
     clipboard = QApplication.clipboard()
