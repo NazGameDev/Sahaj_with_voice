@@ -138,8 +138,8 @@ class VoiceRecorderWorker(QThread):
                     rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
                     raw = rms / 32767.0
                     # Multiply by 3 to make quiet speech more visible, cap at 1.0
-                    boosted = min(raw * 3.0, 1.0)
-                    normalized = boosted ** 0.7
+                    boosted = min(raw * 8.0, 1.0)
+                    normalized = boosted ** 0.5
                     self.level_update.emit(normalized)
             except Exception:
                 pass
@@ -204,7 +204,7 @@ class VoiceTypingWorker(QThread):
 
             # Chunk and transcribe
             CHUNK_SECONDS = 12
-            OVERLAP_SECONDS = 1   # reduced overlap
+            OVERLAP_SECONDS = 0.5   # reduced overlap
             SAMPLE_RATE = 16000
             CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
             OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
@@ -269,7 +269,19 @@ class VoiceTypingWorker(QThread):
                 start_sample = int(start_sample + (CHUNK_SAMPLES - OVERLAP_SAMPLES))
 
             if full_text:
-                combined = " ".join(full_text).strip()
+                # Deduplicate: remove chunks that are very similar to the previous one
+                deduped = []
+                prev = ""
+                for chunk in full_text:
+                    if prev:
+                        # Compare similarity
+                        import difflib
+                        ratio = difflib.SequenceMatcher(None, prev, chunk).ratio()
+                        if ratio > 0.7:  # if more than 70% similar, skip
+                            continue
+                    deduped.append(chunk)
+                    prev = chunk
+                combined = " ".join(deduped).strip()
                 self.finished.emit(combined)
             else:
                 self.error.emit("Could not understand the audio. Please try again with clearer speech.")
