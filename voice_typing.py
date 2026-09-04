@@ -136,8 +136,10 @@ class VoiceRecorderWorker(QThread):
                 samples = array.array('h', in_data)
                 if samples:
                     rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
-                    # Normalize to 0-1 (max for int16 is ~32767)
-                    normalized = min(rms / 32767.0, 1.0)
+                    raw = rms / 32767.0
+                    # Multiply by 3 to make quiet speech more visible, cap at 1.0
+                    boosted = min(raw * 3.0, 1.0)
+                    normalized = boosted ** 0.7
                     self.level_update.emit(normalized)
             except Exception:
                 pass
@@ -200,9 +202,9 @@ class VoiceTypingWorker(QThread):
                 sys.stderr = old_stderr
                 devnull.close()
 
-            # Chunk and transcribe (your existing code remains)
+            # Chunk and transcribe
             CHUNK_SECONDS = 12
-            OVERLAP_SECONDS = 0.5
+            OVERLAP_SECONDS = 1   # reduced overlap
             SAMPLE_RATE = 16000
             CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
             OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
@@ -212,19 +214,6 @@ class VoiceTypingWorker(QThread):
 
             samples = array.array('h', raw_data)
             total_samples = len(samples)
-
-            # Suppress stdout to hide progress bars
-            devnull = open(os.devnull, 'w')
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            sys.stdout = devnull
-            sys.stderr = devnull
-            try:
-                pass
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                devnull.close()
 
             full_text = []
             start_sample = 0
@@ -245,11 +234,13 @@ class VoiceTypingWorker(QThread):
                     return
 
                 end_sample = min(start_sample + CHUNK_SAMPLES, total_samples)
-                chunk_samples = samples[start_sample:end_sample]
+                start_idx = int(start_sample)
+                end_idx = int(end_sample)
+                chunk_samples = samples[start_idx:end_idx]
 
                 temp_chunk = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 temp_chunk_path = temp_chunk.name
-                temp_chunk.close()  # ensure file handle is released
+                temp_chunk.close()
 
                 try:
                     with wave.open(temp_chunk_path, 'wb') as wf_chunk:
@@ -258,7 +249,6 @@ class VoiceTypingWorker(QThread):
                         wf_chunk.setframerate(SAMPLE_RATE)
                         wf_chunk.writeframes(chunk_samples.tobytes())
 
-                    # Transcribe
                     chunk_text = transcriber.transcribe_rnnt(temp_chunk_path, "as")
                     if chunk_text and chunk_text.strip():
                         full_text.append(chunk_text.strip())
@@ -266,7 +256,6 @@ class VoiceTypingWorker(QThread):
                 except Exception as e:
                     log_error(f"Chunk transcription error: {e}")
                 finally:
-                    # Retry deletion with backoff
                     for attempt in range(5):
                         try:
                             os.remove(temp_chunk_path)
@@ -277,12 +266,7 @@ class VoiceTypingWorker(QThread):
                             log_error(f"Failed to delete {temp_chunk_path}: {e}")
                             break
 
-                start_sample += (CHUNK_SAMPLES - OVERLAP_SAMPLES)
-
-            try:
-                os.remove(self.audio_filepath)
-            except:
-                pass
+                start_sample = int(start_sample + (CHUNK_SAMPLES - OVERLAP_SAMPLES))
 
             if full_text:
                 combined = " ".join(full_text).strip()
@@ -294,3 +278,11 @@ class VoiceTypingWorker(QThread):
             error_msg = f"VoiceTypingWorker.run error: {str(e)}\n{traceback.format_exc()}"
             log_error(error_msg)
             self.error.emit(f"An error occurred during voice typing.\n\nError: {str(e)}\n\nPlease check the log file:\n{os.path.join(os.path.expanduser('~'), 'sahaj_voice_error.log')}")
+        finally:
+            # Always delete the main audio file
+            try:
+                if os.path.exists(self.audio_filepath):
+                    os.remove(self.audio_filepath)
+                    log_error(f"Deleted main audio file: {self.audio_filepath}")
+            except Exception as e:
+                log_error(f"Failed to delete main audio file: {e}")
