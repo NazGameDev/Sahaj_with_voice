@@ -6,7 +6,6 @@ import wave
 import traceback
 import array
 import pyaudio
-import math
 import threading
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 
@@ -59,10 +58,10 @@ except Exception as e:
 
 
 class VoiceRecorderWorker(QThread):
-    amplitude_changed = pyqtSignal(float)
     recording_started = pyqtSignal()
     recording_stopped = pyqtSignal(str)
     error = pyqtSignal(str)
+    level_update = pyqtSignal(float)
 
     def __init__(self, max_duration=24):
         super().__init__()
@@ -130,12 +129,18 @@ class VoiceRecorderWorker(QThread):
     def _callback(self, in_data, frame_count, time_info, status):
         if self.is_recording:
             self.frames.append(in_data)
-            # Compute RMS for visualizer
-            samples = array.array('h', in_data)
-            if samples:
-                rms = math.sqrt(sum(s**2 for s in samples) / len(samples))
-                normalized = min(1.0, rms / 15000)
-                self.amplitude_changed.emit(normalized)
+            # Compute RMS (root mean square) as a rough volume indicator
+            try:
+                # Convert bytes to int16 samples
+                import array
+                samples = array.array('h', in_data)
+                if samples:
+                    rms = (sum(s*s for s in samples) / len(samples)) ** 0.5
+                    # Normalize to 0-1 (max for int16 is ~32767)
+                    normalized = min(rms / 32767.0, 1.0)
+                    self.level_update.emit(normalized)
+            except Exception:
+                pass
         return (in_data, pyaudio.paContinue)
 
     def stop(self):
@@ -197,7 +202,7 @@ class VoiceTypingWorker(QThread):
 
             # Chunk and transcribe (your existing code remains)
             CHUNK_SECONDS = 12
-            OVERLAP_SECONDS = 2
+            OVERLAP_SECONDS = 0.5
             SAMPLE_RATE = 16000
             CHUNK_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE
             OVERLAP_SAMPLES = OVERLAP_SECONDS * SAMPLE_RATE
@@ -244,23 +249,33 @@ class VoiceTypingWorker(QThread):
 
                 temp_chunk = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
                 temp_chunk_path = temp_chunk.name
-                with wave.open(temp_chunk_path, 'wb') as wf_chunk:
-                    wf_chunk.setnchannels(1)
-                    wf_chunk.setsampwidth(2)
-                    wf_chunk.setframerate(SAMPLE_RATE)
-                    wf_chunk.writeframes(chunk_samples.tobytes())
+                temp_chunk.close()  # ensure file handle is released
 
                 try:
+                    with wave.open(temp_chunk_path, 'wb') as wf_chunk:
+                        wf_chunk.setnchannels(1)
+                        wf_chunk.setsampwidth(2)
+                        wf_chunk.setframerate(SAMPLE_RATE)
+                        wf_chunk.writeframes(chunk_samples.tobytes())
+
+                    # Transcribe
                     chunk_text = transcriber.transcribe_rnnt(temp_chunk_path, "as")
                     if chunk_text and chunk_text.strip():
                         full_text.append(chunk_text.strip())
-                    os.remove(temp_chunk_path)
+
                 except Exception as e:
                     log_error(f"Chunk transcription error: {e}")
-                    try:
-                        os.remove(temp_chunk_path)
-                    except:
-                        pass
+                finally:
+                    # Retry deletion with backoff
+                    for attempt in range(5):
+                        try:
+                            os.remove(temp_chunk_path)
+                            break
+                        except PermissionError:
+                            time.sleep(0.1 * (attempt + 1))
+                        except Exception as e:
+                            log_error(f"Failed to delete {temp_chunk_path}: {e}")
+                            break
 
                 start_sample += (CHUNK_SAMPLES - OVERLAP_SAMPLES)
 
