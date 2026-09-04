@@ -1463,12 +1463,12 @@ class AssameseTypingApp(QMainWindow):
         self.voice_progress.setFixedHeight(6)
         self.voice_progress.setStyleSheet("""
             QProgressBar {
-                background-color: #444444;
+                background-color: #D3D3D3;   /* Light Gray */
                 border: none;
                 border-radius: 3px;
             }
             QProgressBar::chunk {
-                background-color: #0D6EFD;
+                background-color: #008080;   /* Deep Teal */
                 border-radius: 3px;
             }
         """)
