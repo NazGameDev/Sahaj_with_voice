@@ -1162,7 +1162,7 @@ class AssameseTypingApp(QMainWindow):
         self.load_helper_buttons()
         self.autosave_timer = QTimer()
         self.autosave_timer.timeout.connect(self.save_text)
-        self.autosave_timer.start(4000)
+        self.autosave_timer.start(6000)
         self.network_timer = QTimer()
         self.network_timer.timeout.connect(self.check_network)
         self.network_timer.start(5000)
@@ -1851,45 +1851,63 @@ class AssameseTypingApp(QMainWindow):
         self.text_area.setFocus()
 
     def save_text(self):
+        """Save editor text atomically with fsync for power-failure safety."""
         text = self.text_area.toPlainText()
         try:
-            # Write to temporary file
             temp_file = self.autosave_file + ".tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
                 f.write(text)
-            # Atomic replace for main autosave
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(temp_file, self.autosave_file)
-            # Also write a plain backup copy (no atomic needed)
+            try:
+                if hasattr(os, "O_DIRECTORY"):
+                    dir_fd = os.open(
+                        os.path.dirname(self.autosave_file) or ".",
+                        os.O_DIRECTORY,
+                    )
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+            except Exception:
+                pass
             backup_file = self.autosave_file + ".bak"
             with open(backup_file, "w", encoding="utf-8") as f:
                 f.write(text)
-        except Exception:
-            pass
+
+        except Exception as e:
+            try:
+                err_log = os.path.join(get_user_data_dir(), "autosave_error.log")
+                with open(err_log, "a", encoding="utf-8") as log:
+                    log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {e}\n")
+            except Exception:
+                pass
 
     def load_autosave(self):
-        # Try main autosave file first
-        if os.path.exists(self.autosave_file):
+        candidates = [
+            self.autosave_file,
+            self.autosave_file + ".tmp",
+            self.autosave_file + ".bak",
+        ]
+        for path in candidates:
+            if not os.path.exists(path):
+                continue
             try:
-                with open(self.autosave_file, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    if content and content.strip():
-                        self.text_area.setPlainText(content)
-                        return
-            except:
-                pass
-
-        # If main file is empty/corrupted, try backup
-        backup_file = self.autosave_file + ".bak"
-        if os.path.exists(backup_file):
-            try:
-                with open(backup_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    if content and content.strip():
-                        self.text_area.setPlainText(content)
-                        QMessageBox.information(self, "Recovery", "Restored from backup.")
-                        return
-            except:
-                pass
+                if content and content.strip():
+                    self.text_area.setPlainText(content)
+                    if path != self.autosave_file:
+                        QMessageBox.information(
+                            self,
+                            "Recovery",
+                            f"Your previous text was recovered from "
+                            f"{os.path.basename(path)}.",
+                        )
+                    return
+            except Exception:
+                continue
 
         # If nothing works, start empty
         self.text_area.setPlainText("")
