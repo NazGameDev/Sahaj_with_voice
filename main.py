@@ -15,6 +15,14 @@ except ImportError as e:
     voice_typing = None
     print(f"Voice typing module not available: {e}")
 
+try:
+    import typing_modes
+    HAS_TYPING_MODES = True
+except ImportError as e:
+    typing_modes = None
+    HAS_TYPING_MODES = False
+    print(f"Typing modes module not available: {e}")
+
 from contextlib import contextmanager
 
 @contextmanager
@@ -105,7 +113,7 @@ else:
 
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
-                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit)
+                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
 
@@ -269,6 +277,41 @@ QLabel#translatedResult {
     color: #0D6EFD;
     font-weight: bold;
 }
+QComboBox {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CED4DA;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: bold;
+    min-width: 150px;
+}
+QComboBox:hover {
+    border-color: #86B7FE;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #495057;
+    width: 0;
+    height: 0;
+    margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CED4DA;
+    border-radius: 4px;
+    selection-background-color: #0D6EFD;
+    selection-color: #FFFFFF;
+    outline: none;
+    padding: 2px;
+}
 QMenu {
     background-color: #FFFFFF;
     border: 1px solid #CED4DA;
@@ -424,6 +467,41 @@ QLabel#translatedResult {
     font-family: {font_css};
     color: #86B7FE;
     font-weight: bold;
+}
+QComboBox {
+    background-color: #3C3C3C;
+    color: #E0E0E0;
+    border: 1px solid #555555;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: bold;
+    min-width: 150px;
+}
+QComboBox:hover {
+    border-color: #86B7FE;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #E0E0E0;
+    width: 0;
+    height: 0;
+    margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+    background-color: #2C2C2C;
+    color: #E0E0E0;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    selection-background-color: #007ACC;
+    selection-color: #FFFFFF;
+    outline: none;
+    padding: 2px;
 }
 QMenu {
     background-color: #2C2C2C;
@@ -1185,14 +1263,21 @@ class AssameseTypingApp(QMainWindow):
         self.countdown_timer.timeout.connect(self.update_countdown)
         self.countdown_timer.setInterval(1000)  # 1 second
         
-    def toggle_engine(self, checked):
-        """Toggle between Live AI (Google) and Built-in AI (Offline)"""
-        if checked:
-            self.engine_toggle.setText("Live AI")
-            self.translation_mode = "google"
-        else:
-            self.engine_toggle.setText("Built-in AI")
-            self.translation_mode = "offline"
+    def on_engine_mode_changed(self, index):
+        """Handle dropdown selection: engine switch OR typing-mode switch."""
+        if index in (0, 1):
+            # Translation engine modes
+            self.translation_mode = "google" if index == 0 else "offline"
+            if HAS_TYPING_MODES and getattr(self, "typing_manager", None):
+                self.typing_manager.set_mode("none")
+        elif index == 2:
+            # Mouse typing
+            if HAS_TYPING_MODES and getattr(self, "typing_manager", None):
+                self.typing_manager.set_mode("mouse")
+        elif index == 3:
+            # InScript typing
+            if HAS_TYPING_MODES and getattr(self, "typing_manager", None):
+                self.typing_manager.set_mode("inscript")
 
     def start_voice_typing(self):
         if not hasattr(self, 'recording_worker') or self.recording_worker is None:
@@ -1411,29 +1496,27 @@ class AssameseTypingApp(QMainWindow):
         """)
         self.phonetic_btn.toggled.connect(self.toggle_phonetic)
         
-        self.engine_toggle = QCheckBox("Live AI")
-        self.engine_toggle.setChecked(True)  # Default: Live AI (Google)
-        self.engine_toggle.setToolTip("Toggle between Live AI (Google) and Built-in AI (Offline)")
-        self.engine_toggle.setStyleSheet("""
-            QCheckBox {
-                font-weight: bold;
-                color: #0D6EFD;
-            }
-            QCheckBox::indicator {
-                width: 40px;
-                height: 20px;
-                border-radius: 10px;
-                background-color: #6C757D;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #0D6EFD;
-            }
-            QCheckBox::indicator:unchecked {
-                background-color: #6C757D;
-            }
-        """)
-        
-        self.engine_toggle.toggled.connect(self.toggle_engine)
+        # --- Mode dropdown: Live AI / Built-In AI / Mouse Typing / InScript Typing ---
+        self.engine_combo = QComboBox()
+        self.engine_combo.setToolTip(
+            "Choose the translation engine or a typing mode.\n"
+            "• Live AI       – online transliteration (Google)\n"
+            "• Built-In AI   – offline AI4Bharat engine\n"
+            "• Mouse Typing  – click on-screen Assamese letters\n"
+            "• Inscript Typing – type Assamese with the physical keyboard"
+        )
+        self.engine_combo.addItems(
+            ["Live AI", "Built-In AI", "Mouse Typing", "Inscript Typing"]
+        )
+        if not HAS_TYPING_MODES:
+            # Grey out the typing-mode entries if the module couldn't load
+            model = self.engine_combo.model()
+            for i in (2, 3):
+                item = model.item(i)
+                if item is not None:
+                    item.setEnabled(False)
+        self.engine_combo.setCurrentIndex(0)
+        self.engine_combo.currentIndexChanged.connect(self.on_engine_mode_changed)
 
         self.voice_btn = QPushButton("🎤 Voice Typing")
         self.voice_btn.setToolTip("Click to start voice typing in Assamese")
@@ -1503,7 +1586,7 @@ class AssameseTypingApp(QMainWindow):
         toolbar.addWidget(clear_btn)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.phonetic_btn)
-        toolbar.addWidget(self.engine_toggle)
+        toolbar.addWidget(self.engine_combo)
         toolbar.addWidget(self.voice_btn)
         toolbar.addWidget(self.voice_progress)
         toolbar.addWidget(self.voice_timer_label)
@@ -1574,6 +1657,12 @@ class AssameseTypingApp(QMainWindow):
         self.text_area.setFont(font)
         self.text_area.update_suggestion_font()
         layout.addWidget(self.text_area)
+
+        # --- Wire up typing-mode manager (InScript + Mouse Typing) ---
+        if HAS_TYPING_MODES:
+            self.typing_manager = typing_modes.TypingModeManager(self, self.text_area)
+        else:
+            self.typing_manager = None
 
         footer_layout = QHBoxLayout()
         footer_layout.setSpacing(10)
