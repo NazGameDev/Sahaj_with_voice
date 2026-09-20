@@ -64,26 +64,24 @@ def _colors(theme):
     return THEME_COLORS.get(theme, THEME_COLORS["dark"])
 
 
-def _close_button_style(c):
-    """Small, subtle '✕' — small circle only on hover."""
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: #DC3545;
+def _close_button_style(c=None):
+    """Solid red circle with white ✕ — clearly visible on any theme."""
+    return """
+        QPushButton {
+            background-color: #DC3545;
+            color: #FFFFFF;
             border: none;
             border-radius: 11px;
             font-weight: bold;
             font-size: 13px;
             padding: 0px;
-        }}
-        QPushButton:hover {{
-            background-color: #DC3545;
-            color: #FFFFFF;
-        }}
-        QPushButton:pressed {{
-            background-color: #A52834;
-            color: #FFFFFF;
-        }}
+        }
+        QPushButton:hover {
+            background-color: #E4606D;
+        }
+        QPushButton:pressed {
+            background-color: #BB2D3B;
+        }
     """
 
 
