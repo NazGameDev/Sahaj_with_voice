@@ -2,18 +2,89 @@
 typing_modes.py — Pluggable typing modes for সহজ-Sahaj.
 
 Adds two alternative typing modes to the main application:
-  * InScript  — physical keyboard mapped to Assamese, with an on-screen keyboard.
-  * Mouse     — click-to-insert Assamese letters panel.
+  * InScript   — physical keyboard mapped to Assamese + on-screen keyboard.
+  * Mouse      — click-to-insert Assamese letters panel.
 
-The manager (TypingModeManager) hooks into the main window's text editor via
-an event filter (so that the main app code stays untouched.)
+Both windows follow the app's light / dark theme.
 """
 import sys
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
+    QApplication,
 )
 from PyQt6.QtCore import Qt, QPoint, QEvent, pyqtSignal, QObject
-from PyQt6.QtGui import QFont
+
+
+# ==================================================================
+# Theme palette
+# ==================================================================
+THEME_COLORS = {
+    "dark": {
+        "window_bg":        "#2C2C2C",
+        "window_border":    "#666666",
+        "title_color":      "#EEEEEE",
+        "key_bg":           "#3C3C3C",
+        "key_fg":           "#E0E0E0",
+        "key_border":       "#555555",
+        "key_hover_bg":     "#505050",
+        "key_hover_border": "#888888",
+        "key_pressed_bg":   "#0D6EFD",
+        "key_pressed_fg":   "#FFFFFF",
+        "special_bg":       "#444444",
+        "special_fg":       "#EEEEEE",
+        "shift_bg":         "#5A6268",
+        "enter_bg":         "#198754",
+        "backspace_bg":     "#DC3545",
+        "shift_active_bg":  "#FD7E14",
+        "divider":          "#666666",
+    },
+    "light": {
+        "window_bg":        "#F8F9FA",
+        "window_border":    "#CED4DA",
+        "title_color":      "#333333",
+        "key_bg":           "#FFFFFF",
+        "key_fg":           "#333333",
+        "key_border":       "#CED4DA",
+        "key_hover_bg":     "#E9ECEF",
+        "key_hover_border": "#86B7FE",
+        "key_pressed_bg":   "#0D6EFD",
+        "key_pressed_fg":   "#FFFFFF",
+        "special_bg":       "#E9ECEF",
+        "special_fg":       "#333333",
+        "shift_bg":         "#DEE2E6",
+        "enter_bg":         "#198754",
+        "backspace_bg":     "#DC3545",
+        "shift_active_bg":  "#FD7E14",
+        "divider":          "#CED4DA",
+    },
+}
+
+
+def _colors(theme):
+    return THEME_COLORS.get(theme, THEME_COLORS["dark"])
+
+
+def _close_button_style(c):
+    """Small, subtle '✕' — small circle only on hover."""
+    return f"""
+        QPushButton {{
+            background-color: transparent;
+            color: #DC3545;
+            border: none;
+            border-radius: 11px;
+            font-weight: bold;
+            font-size: 13px;
+            padding: 0px;
+        }}
+        QPushButton:hover {{
+            background-color: #DC3545;
+            color: #FFFFFF;
+        }}
+        QPushButton:pressed {{
+            background-color: #A52834;
+            color: #FFFFFF;
+        }}
+    """
 
 
 # ==================================================================
@@ -183,7 +254,7 @@ class InScriptKeyboardWindow(QDialog):
     key_clicked = pyqtSignal(str)
     special_key = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme="dark"):
         super().__init__(parent)
         self.setWindowTitle("InScript Assamese Keyboard")
         self.setWindowFlags(
@@ -191,22 +262,45 @@ class InScriptKeyboardWindow(QDialog):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        self.theme = theme
         self._drag_position = QPoint()
         self._shift_state = False
         self._software_shift = False
         self._key_buttons = []
+        self.title_label = None
+        self.close_btn = None
 
         self._build_ui()
+        self._apply_stylesheet()
 
-        QApplication_instance = None
-        try:
-            from PyQt6.QtWidgets import QApplication
-            QApplication_instance = QApplication.instance()
-        except Exception:
-            pass
-        if QApplication_instance is not None:
-            QApplication_instance.installEventFilter(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
 
+    # ---------------------------------------------------------
+    def set_theme(self, theme):
+        self.theme = theme
+        self._apply_stylesheet()
+        self._refresh_all_buttons()
+
+    def _apply_stylesheet(self):
+        c = _colors(self.theme)
+        self.setStyleSheet(f"""
+            InScriptKeyboardWindow {{
+                background-color: {c['window_bg']};
+                border: 2px solid {c['window_border']};
+                border-radius: 10px;
+            }}
+        """)
+        if self.title_label:
+            self.title_label.setStyleSheet(
+                f"color: {c['title_color']}; font-weight: bold; "
+                f"padding: 4px; font-size: 13px;"
+            )
+        if self.close_btn:
+            self.close_btn.setStyleSheet(_close_button_style(c))
+
+    # ---------------------------------------------------------
     def eventFilter(self, obj, event):
         etype = event.type()
         if etype in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
@@ -217,30 +311,21 @@ class InScriptKeyboardWindow(QDialog):
                     self._refresh_all_buttons()
         return super().eventFilter(obj, event)
 
+    # ---------------------------------------------------------
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(8)
 
         title_bar = QHBoxLayout()
-        title_label = QLabel("⌨️  InScript Assamese — drag to move")
-        title_label.setStyleSheet(
-            "color: #EEE; font-weight: bold; padding: 4px; font-size: 13px;"
-        )
-        title_bar.addWidget(title_label)
+        self.title_label = QLabel("⌨️  InScript Assamese — drag to move")
+        title_bar.addWidget(self.title_label)
         title_bar.addStretch()
 
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #DC3545; color: white; border: none;
-                border-radius: 14px; font-weight: bold; font-size: 14px;
-            }
-            QPushButton:hover { background-color: #BB2D3B; }
-        """)
-        close_btn.clicked.connect(self.hide)
-        title_bar.addWidget(close_btn)
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.clicked.connect(self.hide)
+        title_bar.addWidget(self.close_btn)
         main_layout.addLayout(title_bar)
 
         for row in KEYBOARD_ROWS:
@@ -254,15 +339,9 @@ class InScriptKeyboardWindow(QDialog):
             row_layout.addStretch()
             main_layout.addLayout(row_layout)
 
-        self.setStyleSheet("""
-            InScriptKeyboardWindow {
-                background-color: #2C2C2C;
-                border: 2px solid #666;
-                border-radius: 10px;
-            }
-        """)
         self.adjustSize()
 
+    # ---------------------------------------------------------
     def _make_key_button(self, key_def):
         label, normal, shifted, width_units, action = key_def
         btn = QPushButton()
@@ -270,12 +349,6 @@ class InScriptKeyboardWindow(QDialog):
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn._key_def = key_def
         self._key_buttons.append(btn)
-
-        if action in ("shift", "caps", "tab", "enter", "backspace", "space",
-                      "ctrl", "win", "alt", "menu"):
-            btn.setStyleSheet(self._special_key_style(action))
-        else:
-            btn.setStyleSheet(self._char_key_style())
 
         if action == "shift":
             btn.clicked.connect(self._toggle_software_shift)
@@ -293,42 +366,73 @@ class InScriptKeyboardWindow(QDialog):
         self._refresh_button(btn)
         return btn
 
+    # ---------------------------------------------------------
     def _char_key_style(self):
-        return """
-            QPushButton {
-                background-color: #3C3C3C;
-                color: #E0E0E0;
-                border: 1px solid #555;
+        c = _colors(self.theme)
+        return f"""
+            QPushButton {{
+                background-color: {c['key_bg']};
+                color: {c['key_fg']};
+                border: 1px solid {c['key_border']};
                 border-radius: 5px;
                 font-size: 20px;
                 font-family: "Nirmala UI", "Segoe UI", sans-serif;
                 padding: 2px;
-            }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:pressed { background-color: #0D6EFD; color: white; }
+            }}
+            QPushButton:hover {{
+                background-color: {c['key_hover_bg']};
+                border-color: {c['key_hover_border']};
+            }}
+            QPushButton:pressed {{
+                background-color: {c['key_pressed_bg']};
+                color: {c['key_pressed_fg']};
+            }}
         """
 
     def _special_key_style(self, action):
-        bg = "#444"
+        c = _colors(self.theme)
+        bg = c["special_bg"]
+        fg = c["special_fg"]
         if action == "shift":
-            bg = "#5A6268"
+            bg = c["shift_bg"]
         elif action == "enter":
-            bg = "#198754"
+            bg = c["enter_bg"]
+            fg = "#FFFFFF"
         elif action == "backspace":
-            bg = "#DC3545"
+            bg = c["backspace_bg"]
+            fg = "#FFFFFF"
         return f"""
             QPushButton {{
                 background-color: {bg};
-                color: #EEE;
-                border: 1px solid #666;
+                color: {fg};
+                border: 1px solid {c['key_border']};
                 border-radius: 5px;
                 font-size: 16px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: #505050; }}
-            QPushButton:pressed {{ background-color: #0D6EFD; color: white; }}
+            QPushButton:hover {{
+                background-color: {c['key_hover_bg']};
+            }}
+            QPushButton:pressed {{
+                background-color: {c['key_pressed_bg']};
+                color: {c['key_pressed_fg']};
+            }}
         """
 
+    def _shift_active_style(self):
+        c = _colors(self.theme)
+        return f"""
+            QPushButton {{
+                background-color: {c['shift_active_bg']};
+                color: white;
+                border: 1px solid {c['key_border']};
+                border-radius: 5px;
+                font-size: 16px;
+                font-weight: bold;
+            }}
+        """
+
+    # ---------------------------------------------------------
     def _emit_char(self, btn):
         label, normal, shifted, _, action = btn._key_def
         if action is not None:
@@ -348,6 +452,7 @@ class InScriptKeyboardWindow(QDialog):
     def _is_shift_active(self):
         return self._shift_state or self._software_shift
 
+    # ---------------------------------------------------------
     def _refresh_all_buttons(self):
         for btn in self._key_buttons:
             self._refresh_button(btn)
@@ -363,18 +468,11 @@ class InScriptKeyboardWindow(QDialog):
                 btn.setText(label)
             if action == "shift":
                 if self._is_shift_active():
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #FD7E14;
-                            color: white;
-                            border: 1px solid #666;
-                            border-radius: 5px;
-                            font-size: 16px;
-                            font-weight: bold;
-                        }
-                    """)
+                    btn.setStyleSheet(self._shift_active_style())
                 else:
                     btn.setStyleSheet(self._special_key_style("shift"))
+            else:
+                btn.setStyleSheet(self._special_key_style(action))
             return
 
         char = shifted if self._is_shift_active() else normal
@@ -383,17 +481,16 @@ class InScriptKeyboardWindow(QDialog):
         else:
             btn.setText("")
         btn.setToolTip(
-            f"Key: {label}\nNormal: {normal or '(blank)'}\nShifted: {shifted or '(blank)'}"
+            f"Key: {label}\nNormal: {normal or '(blank)'}\n"
+            f"Shifted: {shifted or '(blank)'}"
         )
+        btn.setStyleSheet(self._char_key_style())
 
+    # ---------------------------------------------------------
     def closeEvent(self, event):
-        try:
-            from PyQt6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app is not None:
-                app.removeEventFilter(self)
-        except Exception:
-            pass
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     def mousePressEvent(self, event):
@@ -418,40 +515,89 @@ class MouseTypingWindow(QDialog):
     KEY_SIZE = 52
     KEY_SPACING = 5
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme="dark"):
         super().__init__(parent)
         self.setWindowTitle("Mouse Typing — Assamese Alphabet")
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.theme = theme
         self._drag_position = QPoint()
+        self.title_label = None
+        self.close_btn = None
+        self.divider = None
         self._build_ui()
+        self._apply_stylesheet()
 
+    # ---------------------------------------------------------
+    def set_theme(self, theme):
+        self.theme = theme
+        self._apply_stylesheet()
+        # Refresh every key button
+        for btn in self.findChildren(QPushButton):
+            if btn is self.close_btn:
+                continue
+            btn.setStyleSheet(self._key_style())
+
+    def _apply_stylesheet(self):
+        c = _colors(self.theme)
+        self.setStyleSheet(f"""
+            MouseTypingWindow {{
+                background-color: {c['window_bg']};
+                border: 2px solid {c['window_border']};
+                border-radius: 10px;
+            }}
+        """)
+        if self.title_label:
+            self.title_label.setStyleSheet(
+                f"color: {c['title_color']}; font-weight: bold; "
+                f"padding: 4px; font-size: 13px;"
+            )
+        if self.close_btn:
+            self.close_btn.setStyleSheet(_close_button_style(c))
+        if self.divider:
+            self.divider.setStyleSheet(
+                f"color: {c['divider']}; background-color: {c['divider']};"
+            )
+
+    # ---------------------------------------------------------
+    def _key_style(self):
+        c = _colors(self.theme)
+        return f"""
+            QPushButton {{
+                background-color: {c['key_bg']};
+                color: {c['key_fg']};
+                border: 1px solid {c['key_border']};
+                border-radius: 6px;
+                font-size: 16px;
+                font-family: "Nirmala UI", "Segoe UI", sans-serif;
+            }}
+            QPushButton:hover {{
+                background-color: {c['key_hover_bg']};
+                border-color: {c['key_hover_border']};
+            }}
+            QPushButton:pressed {{
+                background-color: {c['key_pressed_bg']};
+                color: {c['key_pressed_fg']};
+            }}
+        """
+
+    # ---------------------------------------------------------
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(14, 14, 14, 14)
         main_layout.setSpacing(10)
 
         title_bar = QHBoxLayout()
-        title_label = QLabel("🖱️  Mouse Typing — click any letter")
-        title_label.setStyleSheet(
-            "color: #EEE; font-weight: bold; padding: 4px; font-size: 13px;"
-        )
-        title_bar.addWidget(title_label)
+        self.title_label = QLabel("🖱️  Mouse Typing — click any letter")
+        title_bar.addWidget(self.title_label)
         title_bar.addStretch()
 
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #DC3545; color: white; border: none;
-                border-radius: 14px; font-weight: bold; font-size: 14px;
-            }
-            QPushButton:hover { background-color: #BB2D3B; }
-        """)
-        close_btn.clicked.connect(self.hide)
-        title_bar.addWidget(close_btn)
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.clicked.connect(self.hide)
+        title_bar.addWidget(self.close_btn)
         main_layout.addLayout(title_bar)
 
         content = QHBoxLayout()
@@ -478,12 +624,11 @@ class MouseTypingWindow(QDialog):
         left_layout.addStretch()
         content.addWidget(left_widget)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Plain)
-        divider.setStyleSheet("color: #666; background-color: #666;")
-        divider.setFixedWidth(2)
-        content.addWidget(divider)
+        self.divider = QFrame()
+        self.divider.setFrameShape(QFrame.Shape.VLine)
+        self.divider.setFrameShadow(QFrame.Shadow.Plain)
+        self.divider.setFixedWidth(2)
+        content.addWidget(self.divider)
 
         # Right: vowels
         right_widget = QWidget()
@@ -501,36 +646,19 @@ class MouseTypingWindow(QDialog):
         content.addWidget(right_widget)
 
         main_layout.addLayout(content)
-
-        self.setStyleSheet("""
-            MouseTypingWindow {
-                background-color: #2C2C2C;
-                border: 2px solid #666;
-                border-radius: 10px;
-            }
-        """)
         self.adjustSize()
 
+    # ---------------------------------------------------------
     def _make_button(self, display, value):
         btn = QPushButton(display)
         btn.setFixedSize(self.KEY_SIZE, self.KEY_SIZE)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setToolTip(f"Insert: {value}")
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3C3C3C;
-                color: #E0E0E0;
-                border: 1px solid #555;
-                border-radius: 6px;
-                font-size: 20px;
-                font-family: "Nirmala UI", "Segoe UI", sans-serif;
-            }
-            QPushButton:hover { background-color: #505050; border-color: #888; }
-            QPushButton:pressed { background-color: #0D6EFD; color: white; }
-        """)
+        btn.setStyleSheet(self._key_style())
         btn.clicked.connect(lambda checked, v=value: self.key_clicked.emit(v))
         return btn
 
+    # ---------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_position = (
@@ -545,36 +673,30 @@ class MouseTypingWindow(QDialog):
 
 
 # ==================================================================
-# 6. Manager — the only thing main.py needs to talk to
+# 6. Manager — the only thing main.py talks to
 # ==================================================================
 class TypingModeManager(QObject):
     """
     Hooks InScript / Mouse-Typing windows onto an existing text editor.
-
-    Usage:
-        manager = TypingModeManager(main_window, text_editor)
-        manager.set_mode("none" | "inscript" | "mouse")
     """
-    def __init__(self, main_window, text_editor):
+    def __init__(self, main_window, text_editor, theme="dark"):
         super().__init__(main_window)
         self.main_window = main_window
         self.text_editor = text_editor
+        self.theme = theme
 
         self.inscript_window = None
         self.mouse_window = None
         self.current_mode = "none"
 
-        # Intercept keypresses only when we're in InScript mode
         self.text_editor.installEventFilter(self)
 
     # ----- public -----
     def set_mode(self, mode):
-        """mode: 'none', 'inscript', or 'mouse'"""
         if mode == self.current_mode:
             return
         self.current_mode = mode
 
-        # Always hide both, then show whichever is needed
         self._hide_inscript()
         self._hide_mouse()
 
@@ -582,6 +704,14 @@ class TypingModeManager(QObject):
             self._show_inscript()
         elif mode == "mouse":
             self._show_mouse()
+
+    def set_theme(self, theme):
+        """Called from main.toggle_theme() so live windows follow the theme."""
+        self.theme = theme
+        if self.inscript_window is not None:
+            self.inscript_window.set_theme(theme)
+        if self.mouse_window is not None:
+            self.mouse_window.set_theme(theme)
 
     def shutdown(self):
         self._hide_inscript()
@@ -594,7 +724,9 @@ class TypingModeManager(QObject):
     # ----- internals -----
     def _show_inscript(self):
         if self.inscript_window is None:
-            self.inscript_window = InScriptKeyboardWindow(self.main_window)
+            self.inscript_window = InScriptKeyboardWindow(
+                self.main_window, theme=self.theme
+            )
             self.inscript_window.key_clicked.connect(self._insert_text)
             self.inscript_window.special_key.connect(self._handle_special)
         self._position_window(self.inscript_window)
@@ -608,7 +740,9 @@ class TypingModeManager(QObject):
 
     def _show_mouse(self):
         if self.mouse_window is None:
-            self.mouse_window = MouseTypingWindow(self.main_window)
+            self.mouse_window = MouseTypingWindow(
+                self.main_window, theme=self.theme
+            )
             self.mouse_window.key_clicked.connect(self._insert_text)
         self._position_window(self.mouse_window)
         self.mouse_window.show()
@@ -646,7 +780,7 @@ class TypingModeManager(QObject):
             self.text_editor.insertPlainText("\n")
         self.text_editor.setFocus()
 
-    # ----- the key hook -----
+    # ----- key hook -----
     def eventFilter(self, obj, event):
         if obj is self.text_editor and event.type() == QEvent.Type.KeyPress:
             if self.current_mode == "inscript":
@@ -654,12 +788,10 @@ class TypingModeManager(QObject):
         return super().eventFilter(obj, event)
 
     def _handle_inscript_keypress(self, event):
-        # Space → literal space, swallow phonetic handling
         if event.key() == Qt.Key.Key_Space:
             self.text_editor.insertPlainText(" ")
             return True
 
-        # Let editing / navigation keys reach the editor normally
         if event.key() in (
             Qt.Key.Key_Backspace, Qt.Key.Key_Delete,
             Qt.Key.Key_Left, Qt.Key.Key_Right,
@@ -677,5 +809,4 @@ class TypingModeManager(QObject):
                 self.text_editor.insertPlainText(char)
             return True
 
-        # Consume everything else so phonetic typing never kicks in
         return True
