@@ -305,12 +305,12 @@ QComboBox::down-arrow {
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
     color: #333333;
-    border: 1px solid #CED4DA;
-    border-radius: 4px;
+    border: 1px solid #DEE2E6;
+    border-radius: 6px;
     selection-background-color: #0D6EFD;
     selection-color: #FFFFFF;
-    outline: none;
-    padding: 2px;
+    outline: 0;
+    padding: 4px;
 }
 QMenu {
     background-color: #FFFFFF;
@@ -494,14 +494,14 @@ QComboBox::down-arrow {
     margin-right: 8px;
 }
 QComboBox QAbstractItemView {
-    background-color: #2C2C2C;
+    background-color: #1E1E1E;
     color: #E0E0E0;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    selection-background-color: #007ACC;
+    border: 1px solid #777777;
+    border-radius: 6px;
+    selection-background-color: #0D6EFD;
     selection-color: #FFFFFF;
-    outline: none;
-    padding: 2px;
+    outline: 0;
+    padding: 4px;
 }
 QMenu {
     background-color: #2C2C2C;
@@ -673,8 +673,9 @@ class MeaningWorker(QThread):
 
     def run(self):
         try:
-            url = f"https://api.mymemory.translated.net/get?q={self.word}&langpair=as|en"
-            resp = requests.get(url, timeout=3)
+            url = "https://api.mymemory.translated.net/get"
+            params = {"q": self.word, "langpair": "as|en"}
+            resp = requests.get(url, params=params, timeout=3)
             data = resp.json()
             meaning = ""
             if data.get("responseStatus") == 200:
@@ -859,6 +860,57 @@ class PhoneticTextEdit(QPlainTextEdit):
             self.suggestion_list.hide()
         super().mousePressEvent(event)
 
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+
+        selected = cursor.selectedText().strip()
+        # QTextCursor uses U+2029 for line breaks — normalise
+        selected = selected.replace("\u2029", " ").strip()
+
+        if not selected or len(selected) < 2:
+            return
+
+        # Only handle selections that actually contain Assamese script
+        if not re.search(r'[\u0980-\u09FF]', selected):
+            return
+
+        # Limit to what MyMemory accepts (roughly 500 chars)
+        if len(selected) > 500:
+            selected = selected[:500]
+
+        self._fetch_selection_meaning(selected, event.globalPosition().toPoint())
+
+    def _fetch_selection_meaning(self, text, global_pos):
+        # Keep a reference so the thread isn't garbage-collected
+        if not hasattr(self, "_selection_workers"):
+            self._selection_workers = []
+
+        worker = MeaningWorker(text)
+
+        def _cleanup(*_):
+            try:
+                self._selection_workers.remove(worker)
+            except ValueError:
+                pass
+
+        worker.meaning_fetched.connect(
+            lambda _word, meaning, pos=global_pos: self._show_selection_tooltip(meaning, pos)
+        )
+        worker.finished.connect(_cleanup)
+        self._selection_workers.append(worker)
+        worker.start()
+
+    def _show_selection_tooltip(self, meaning, global_pos):
+        if meaning:
+            safe = html.unescape(meaning)
+            QToolTip.showText(global_pos, safe, self)
+        else:
+            QToolTip.showText(global_pos, "No translation found", self)
+
     def focusOutEvent(self, event):
         if self.suggestion_list.isVisible():
             cursor_pos = self.suggestion_list.mapFromGlobal(QCursor.pos())
@@ -1023,29 +1075,7 @@ class PhoneticTextEdit(QPlainTextEdit):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-
-        current_time = time.time()
-        if hasattr(self, '_last_hover_time') and (current_time - self._last_hover_time) < 0.1:
-            return
-        self._last_hover_time = current_time
-
-        self.hover_global_pos = event.globalPosition().toPoint()
-        cursor = self.cursorForPosition(event.pos())
-        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
-        word = cursor.selectedText().strip()
-
-        if word and re.search(r'[\u0980-\u09FF]', word):
-            if word != self.last_hover_word:
-                self.last_hover_word = word
-                self.hover_word_cursor = QTextCursor(self.document())
-                self.hover_word_cursor.setPosition(cursor.selectionStart())
-                self.hover_word_cursor.setPosition(cursor.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
-                self.hover_timer.start(1000)
-        else:
-            self.last_hover_word = ""
-            self.hover_word_cursor = None
-            self.hover_timer.stop()
-            QToolTip.hideText()
+        QToolTip.hideText()
 
     def show_word_meaning(self):
         word = self.last_hover_word
@@ -1660,7 +1690,9 @@ class AssameseTypingApp(QMainWindow):
 
         # --- Wire up typing-mode manager (InScript + Mouse Typing) ---
         if HAS_TYPING_MODES:
-            self.typing_manager = typing_modes.TypingModeManager(self, self.text_area)
+            self.typing_manager = typing_modes.TypingModeManager(
+                self, self.text_area, theme=self.current_theme
+            )
         else:
             self.typing_manager = None
 
@@ -1724,6 +1756,9 @@ class AssameseTypingApp(QMainWindow):
             self.setStyleSheet(LIGHT_STYLE.replace("{font_css}", font_css))
             self.theme_toggle_btn.setText("☀️")
             self.current_theme = "light"
+
+        if getattr(self, "typing_manager", None):
+            self.typing_manager.set_theme(self.current_theme)
 
     def redo_edit(self):
         self.text_area.redo()
