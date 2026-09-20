@@ -1266,39 +1266,62 @@ class AppLoaderThread(QThread):
 class ModernComboBox(QComboBox):
     """
     A QComboBox with a fully-styleable, bezel-free popup.
-
-    * Uses a plain QListView as the popup (no Fusion bezel).
-    * Strips the private QComboBoxPrivateContainer frame from Python,
-      which cannot be reached via stylesheet on some Qt builds.
-    * Applies the popup font directly on the view, so it always matches
-      the closed combo box font.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Use a plain list view for the popup
         view = QListView()
         view.setUniformItemSizes(True)
         view.setSpacing(2)
         self.setView(view)
 
-        # Font for the popup — same size as the combo box itself
         popup_font = QFont()
-        popup_font.setPointSize(11)   # ~14 px, matches your toolbar
+        popup_font.setPointSize(11)
         popup_font.setBold(True)
         view.setFont(popup_font)
 
+    def _get_theme(self):
+        """Walk up the parent chain to find the app's current_theme."""
+        w = self.window()
+        while w is not None:
+            if hasattr(w, "current_theme"):
+                return w.current_theme
+            w = w.parent()
+        return "dark"
+
     def showPopup(self):
         super().showPopup()
-        # Kill the private container's bezel/background from Python.
-        # This is the step that actually removes the dark bars.
+
         container = self.view().window()
-        if container is not None:
-            container.setStyleSheet(
-                "QFrame { border: none; background: transparent;"
-                " margin: 0px; padding: 0px; }"
-            )
+        if container is None:
+            return
+
+        theme = self._get_theme()
+        if theme == "dark":
+            bg = "#1E1E1E"
+        else:
+            bg = "#FFFFFF"
+
+        # Remove the native frame/shadow that paints the dark bezel
+        try:
+            from PyQt6.QtWidgets import QFrame
+            if isinstance(container, QFrame):
+                container.setFrameShape(QFrame.Shape.NoFrame)
+                container.setFrameShadow(QFrame.Shadow.Plain)
+        except Exception:
+            pass
+
+        # Paint the container with the theme colour so no gray shows through
+        container.setStyleSheet(f"""
+            QFrame {{
+                border: 0px;
+                margin: 0px;
+                padding: 0px;
+                background-color: {bg};
+            }}
+        """)
+        container.setContentsMargins(0, 0, 0, 0)
 
 class AssameseTypingApp(QMainWindow):
     def __init__(self):
@@ -1314,6 +1337,7 @@ class AssameseTypingApp(QMainWindow):
         self.user_dictionary = self.load_user_dictionary()
         self.net_worker = None
         self.current_theme = "dark"
+        self.is_online = True
         font_css = font_family_css(CUSTOM_FONT_FAMILIES)
         self.setStyleSheet(DARK_STYLE.replace("{font_css}", font_css))
         self.spell_errors = []
@@ -1375,6 +1399,17 @@ class AssameseTypingApp(QMainWindow):
             # InScript typing
             if HAS_TYPING_MODES and getattr(self, "typing_manager", None):
                 self.typing_manager.set_mode("inscript")
+
+    def on_typing_mode_closed(self):
+        """Mouse Typing panel was closed by the user.
+        Reset the dropdown to Live AI (online) or Built-In AI (offline)
+        WITHOUT re-triggering on_engine_mode_changed.
+        """
+        target_index = 0 if self.is_online else 1
+        self.engine_combo.blockSignals(True)
+        self.engine_combo.setCurrentIndex(target_index)
+        self.engine_combo.blockSignals(False)
+        self.translation_mode = "google" if self.is_online else "offline"
 
     def start_voice_typing(self):
         if not hasattr(self, 'recording_worker') or self.recording_worker is None:
@@ -1760,6 +1795,7 @@ class AssameseTypingApp(QMainWindow):
             self.typing_manager = typing_modes.TypingModeManager(
                 self, self.text_area, theme=self.current_theme
             )
+            self.typing_manager.mode_closed.connect(self.on_typing_mode_closed)
         else:
             self.typing_manager = None
 
@@ -1846,6 +1882,7 @@ class AssameseTypingApp(QMainWindow):
             self.net_worker.start()
 
     def update_network_status(self, is_online):
+        self.is_online = is_online
         if is_online:
             self.network_status_label.setText("🟢 Online")
             self.network_status_label.setStyleSheet("color: #198754;")
