@@ -116,6 +116,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox, QListView)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
+from PyQt6.QtNetwork import QNetworkInformation
 
 
 def get_user_data_dir():
@@ -669,17 +670,6 @@ class TranslationWorker(QThread):
         self.finished.emit([self.word], self.word)
 
 
-class NetworkCheckWorker(QThread):
-    status_changed = pyqtSignal(bool)
-
-    def run(self):
-        try:
-            requests.get("https://inputtools.google.com", timeout=2)
-            self.status_changed.emit(True)
-        except Exception:
-            self.status_changed.emit(False)
-
-
 class SpellCheckWorker(QThread):
     results_ready = pyqtSignal(list)
 
@@ -726,8 +716,9 @@ class EnglishToAssameseWorker(QThread):
 
     def run(self):
         try:
-            url = f"https://api.mymemory.translated.net/get?q={self.text}&langpair=en|as"
-            resp = requests.get(url, timeout=3)
+            url = "https://api.mymemory.translated.net/get"
+            params = {"q": self.text, "langpair": "en|as"}
+            resp = requests.get(url, params=params, timeout=3)
             data = resp.json()
             translation = ""
             if data.get("responseStatus") == 200:
@@ -760,13 +751,6 @@ class PhoneticTextEdit(QPlainTextEdit):
         self.last_word_start = 0
         self.last_word_end = 0
 
-        self.hover_timer = QTimer(self)
-        self.hover_timer.setSingleShot(True)
-        self.hover_timer.timeout.connect(self.show_word_meaning)
-        self.last_hover_word = ""
-        self.hover_word_cursor = None
-        self.meaning_worker = None
-        self.hover_global_pos = None
         self.original_punctuation = None
         self.punctuation_pos = -1
 
@@ -1108,49 +1092,7 @@ class PhoneticTextEdit(QPlainTextEdit):
         super().mouseMoveEvent(event)
         QToolTip.hideText()
 
-    def show_word_meaning(self):
-        word = self.last_hover_word
-        if not word:
-            return
-        main_win = self.window()
-        if not isinstance(main_win, AssameseTypingApp):
-            return
-
-        if word in main_win.dictionary:
-            text = html.unescape(main_win.dictionary[word])
-        elif word in main_win.meaning_cache:
-            text = html.unescape(main_win.meaning_cache[word]) or "No meaning found"
-        else:
-            text = "Loading..."
-            if self.meaning_worker and self.meaning_worker.isRunning():
-                self.meaning_worker.terminate()
-            self.meaning_worker = MeaningWorker(word)
-            self.meaning_worker.meaning_fetched.connect(self.on_meaning_fetched)
-            self.meaning_worker.start()
-
-        if self.hover_global_pos:
-            QToolTip.showText(self.hover_global_pos, text, self)
-
-    def on_meaning_fetched(self, word, meaning):
-        main_win = self.window()
-        if isinstance(main_win, AssameseTypingApp):
-            main_win.meaning_cache[word] = meaning
-            if self.last_hover_word == word:
-                self.display_tooltip(word, meaning if meaning else "No meaning found")
-
-    def display_tooltip(self, word, text):
-        safe_text = html.unescape(text if text else "No meaning found")
-        if self.hover_global_pos:
-            QToolTip.showText(self.hover_global_pos, safe_text, self)
-        else:
-            rect = self.cursorRect()
-            pos = self.mapToGlobal(rect.bottomRight())
-            QToolTip.showText(pos, safe_text, self)
-
     def leaveEvent(self, event):
-        self.last_hover_word = ""
-        self.hover_global_pos = None
-        self.hover_timer.stop()
         QToolTip.hideText()
         super().leaveEvent(event)
 
@@ -1335,7 +1277,6 @@ class AssameseTypingApp(QMainWindow):
         self.dictionary_file = resource_path("dictionary.json")
         self.user_dict_file = os.path.join(user_data, "user_dictionary.txt")
         self.user_dictionary = self.load_user_dictionary()
-        self.net_worker = None
         self.current_theme = "dark"
         self.is_online = True
         font_css = font_family_css(CUSTOM_FONT_FAMILIES)
@@ -1345,7 +1286,6 @@ class AssameseTypingApp(QMainWindow):
         self.xlit_engine = None
         self.spell_worker = None
         self.dictionary = {}
-        self.meaning_cache = {}
         self.ignored_error_ranges = set()
         self.phonetic_enabled = True
         self.translation_mode = "google"
@@ -1362,10 +1302,16 @@ class AssameseTypingApp(QMainWindow):
         self.autosave_timer = QTimer()
         self.autosave_timer.timeout.connect(self.save_text)
         self.autosave_timer.start(6000)
-        self.network_timer = QTimer()
-        self.network_timer.timeout.connect(self.check_network)
-        self.network_timer.start(5000)
-        self.check_network()
+        # Use the OS's native network information (no polling, zero traffic)
+        if QNetworkInformation.load(QNetworkInformation.Feature.Reachability):
+            net_info = QNetworkInformation.instance()
+            net_info.reachabilityChanged.connect(self.on_reachability_changed)
+            # Set the initial status based on the current state
+            self.on_reachability_changed(net_info.reachability())
+        else:
+            # Fallback for unsupported platforms (very rare)
+            print("Warning: QNetworkInformation is not supported on this platform.")
+            self.update_network_status(True) # Assume online as a last resort
         self.spell_timer = QTimer()
         self.spell_timer.setSingleShot(True)
         self.spell_timer.timeout.connect(lambda: self.check_spelling())
@@ -1863,6 +1809,36 @@ class AssameseTypingApp(QMainWindow):
         if getattr(self, "typing_manager", None):
             self.typing_manager.set_theme(self.current_theme)
 
+    def closeEvent(self, event):
+        # 1. Flush the editor to disk one last time
+        try:
+            self.save_text()
+        except Exception:
+            pass
+
+        # 2. Stop the loader thread if it's still spinning up the AI model
+        try:
+            if getattr(self, "loader_thread", None) and self.loader_thread.isRunning():
+                self.loader_thread.wait(1500)
+        except Exception:
+            pass
+
+        # 3. Stop the network thread so it doesn't try to touch a dead window
+        try:
+            if getattr(self, "net_worker", None) and self.net_worker.isRunning():
+                self.net_worker.wait(1000)
+        except Exception:
+            pass
+
+        # 4. Tear down the typing-mode manager (removes the event filter)
+        try:
+            if getattr(self, "typing_manager", None):
+                self.typing_manager.shutdown()
+        except Exception:
+            pass
+
+        super().closeEvent(event)
+
     def redo_edit(self):
         self.text_area.redo()
         self.text_area.setFocus()
@@ -1875,11 +1851,20 @@ class AssameseTypingApp(QMainWindow):
             self.phonetic_btn.setText("Phonetic OFF")
         self.text_area.setFocus()
 
-    def check_network(self):
-        if self.net_worker is None or not self.net_worker.isRunning():
-            self.net_worker = NetworkCheckWorker()
-            self.net_worker.status_changed.connect(self.update_network_status)
-            self.net_worker.start()
+    def on_reachability_changed(self, reachability):
+        """
+        Called by the OS whenever the network reachability changes.
+        This is the new, event-driven replacement for the polling timer.
+        """
+        # The Reachability enum has several states. We'll treat
+        # 'Online' and 'Unknown' as being online. The OS reports
+        # 'Unknown' on some platforms when it can't be certain,
+        # but a connection is usually still present.
+        is_online = reachability in (
+            QNetworkInformation.Reachability.Online,
+            QNetworkInformation.Reachability.Unknown,
+        )
+        self.update_network_status(is_online)
 
     def update_network_status(self, is_online):
         self.is_online = is_online
