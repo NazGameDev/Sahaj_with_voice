@@ -1,17 +1,20 @@
 """
 typing_modes.py — Pluggable typing modes for সহজ-Sahaj.
 
-Mouse Typing:
-    Closing the panel  →  exits the mode; main app resets the dropdown.
-InScript Typing:
-    Closing the panel  →  only hides the visual keyboard. The mode stays
-                          active so physical keys keep producing Assamese.
+Performance notes
+-----------------
+* No app-wide event filter. Shift is tracked via the manager's editor
+  filter instead — only active while InScript mode is on.
+* No WA_TranslucentBackground — plain opaque windows drag smoothly.
+* Buttons use property selectors + one dialog stylesheet. No per-button
+  setStyleSheet calls in hot paths.
+* WA_ShowWithoutActivating — opening a panel never steals focus from the
+  editor, so no scroll/repaint spike when the editor has lots of text.
 """
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
-    QApplication,
 )
-from PyQt6.QtCore import Qt, QPoint, QEvent, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QObject
 
 
 # ==================================================================
@@ -63,8 +66,7 @@ def _colors(theme):
     return THEME_COLORS.get(theme, THEME_COLORS["dark"])
 
 
-def _close_button_style(c=None):
-    """Solid red circle with white ✕ — clearly visible on any theme."""
+def _close_button_style():
     return """
         QPushButton {
             background-color: #DC3545;
@@ -84,8 +86,170 @@ def _close_button_style(c=None):
     """
 
 
+def _build_window_qss(theme, window_class_name):
+    """Single stylesheet applied once on the dialog — children inherit."""
+    c = _colors(theme)
+    return f"""
+        {window_class_name} {{
+            background-color: {c['window_bg']};
+            border: 2px solid {c['window_border']};
+            border-radius: 10px;
+        }}
+        QLabel#typingTitle {{
+            color: {c['title_color']};
+            font-weight: bold;
+            padding: 4px;
+            font-size: 13px;
+        }}
+        QFrame#typingDivider {{
+            background-color: {c['divider']};
+            border: none;
+        }}
+
+        /* --- Character keys --- */
+        QPushButton[role="char"] {{
+            background-color: {c['key_bg']};
+            color: {c['key_fg']};
+            border: 1px solid {c['key_border']};
+            border-radius: 5px;
+            font-size: 20px;
+            font-family: "Nirmala UI", "Segoe UI", sans-serif;
+            padding: 2px;
+        }}
+        QPushButton[role="char"]:hover {{
+            background-color: {c['key_hover_bg']};
+            border-color: {c['key_hover_border']};
+        }}
+        QPushButton[role="char"]:pressed {{
+            background-color: {c['key_pressed_bg']};
+            color: {c['key_pressed_fg']};
+        }}
+
+        /* --- Special keys (tab, enter, backspace, ctrl, alt, caps) --- */
+        QPushButton[role="special"] {{
+            background-color: {c['special_bg']};
+            color: {c['special_fg']};
+            border: 1px solid {c['key_border']};
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+        }}
+        QPushButton[role="special"]:hover {{
+            background-color: {c['key_hover_bg']};
+        }}
+        QPushButton[role="special"]:pressed {{
+            background-color: {c['key_pressed_bg']};
+            color: {c['key_pressed_fg']};
+        }}
+
+        /* --- Shift (idle vs active) --- */
+        QPushButton[role="shift"] {{
+            background-color: {c['shift_bg']};
+            color: {c['special_fg']};
+            border: 1px solid {c['key_border']};
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+        }}
+        QPushButton[role="shift"][active="true"] {{
+            background-color: {c['shift_active_bg']};
+            color: white;
+        }}
+        QPushButton[role="shift"]:pressed {{
+            background-color: {c['key_pressed_bg']};
+            color: {c['key_pressed_fg']};
+        }}
+
+        /* --- Enter / Backspace override --- */
+        QPushButton[role="enter"] {{
+            background-color: {c['enter_bg']};
+            color: #FFFFFF;
+            border: 1px solid {c['key_border']};
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+        }}
+        QPushButton[role="backspace"] {{
+            background-color: {c['backspace_bg']};
+            color: #FFFFFF;
+            border: 1px solid {c['key_border']};
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+        }}
+
+        /* --- Mouse Typing letters --- */
+        QPushButton[role="letter"] {{
+            background-color: {c['key_bg']};
+            color: {c['key_fg']};
+            border: 1px solid {c['key_border']};
+            border-radius: 6px;
+            font-size: 16px;
+            font-family: "Nirmala UI", "Segoe UI", sans-serif;
+        }}
+        QPushButton[role="letter"]:hover {{
+            background-color: {c['key_hover_bg']};
+            border-color: {c['key_hover_border']};
+        }}
+        QPushButton[role="letter"]:pressed {{
+            background-color: {c['key_pressed_bg']};
+            color: {c['key_pressed_fg']};
+        }}
+
+        QPushButton#typingClose {{
+            background-color: #DC3545;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 11px;
+            font-weight: bold;
+            font-size: 13px;
+            padding: 0px;
+        }}
+        QPushButton#typingClose:hover {{
+            background-color: #E4606D;
+        }}
+        QPushButton#typingClose:pressed {{
+            background-color: #BB2D3B;
+        }}
+    """
+
+
 # ==================================================================
-# 1. InScript physical-key mapping
+# Drag handle (title bar) — the ONLY place you can drag from.
+# Fixes "clinging" drag when the mouse lands on a key button.
+# ==================================================================
+class DragHandle(QLabel):
+    def __init__(self, text, target_window):
+        super().__init__(text)
+        self.setObjectName("typingTitle")
+        self.target = target_window
+        self._press_offset = None
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_offset = (
+                event.globalPosition().toPoint()
+                - self.target.frameGeometry().topLeft()
+            )
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._press_offset is None:
+            return
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self.target.move(
+                event.globalPosition().toPoint() - self._press_offset
+            )
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._press_offset = None
+        event.accept()
+
+
+# ==================================================================
+# 1. InScript mapping + layout
 # ==================================================================
 INSCRIPT_MAP = {
     "`": "॥",  "~": "~",
@@ -138,9 +302,6 @@ INSCRIPT_MAP = {
 }
 
 
-# ==================================================================
-# 2. InScript keyboard layout
-# ==================================================================
 KEYBOARD_ROWS = [
     [
         ("`",  "॥", "~",  1, None),
@@ -218,7 +379,7 @@ SPACING = 5
 
 
 # ==================================================================
-# 3. Mouse Typing data
+# 2. Mouse Typing data
 # ==================================================================
 MOUSE_TYPING_LEFT = [
     [("ক", "ক"), ("খ", "খ"), ("গ", "গ"), ("ঘ", "ঘ"), ("ঙ", "ঙ"),
@@ -245,7 +406,7 @@ MOUSE_TYPING_RIGHT = [
 
 
 # ==================================================================
-# 4. InScript keyboard window
+# 3. InScript keyboard window
 # ==================================================================
 class InScriptKeyboardWindow(QDialog):
     key_clicked = pyqtSignal(str)
@@ -257,56 +418,41 @@ class InScriptKeyboardWindow(QDialog):
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # PERF: don't steal focus — editor stays focused, no scroll spike.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self.theme = theme
-        self._drag_position = QPoint()
         self._shift_state = False
         self._software_shift = False
-        self._key_buttons = []
-        self.title_label = None
-        self.close_btn = None
+        self._char_buttons = []
+        self._shift_buttons = []
+        self._special_buttons = []
 
         self._build_ui()
-        self._apply_stylesheet()
-
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
+        self._apply_theme()
 
     # ---------------------------------------------------------
     def set_theme(self, theme):
+        if theme == self.theme:
+            return
         self.theme = theme
-        self._apply_stylesheet()
-        self._refresh_all_buttons()
+        self._apply_theme()
 
-    def _apply_stylesheet(self):
-        c = _colors(self.theme)
-        self.setStyleSheet(f"""
-            InScriptKeyboardWindow {{
-                background-color: {c['window_bg']};
-                border: 2px solid {c['window_border']};
-                border-radius: 10px;
-            }}
-        """)
-        if self.title_label:
-            self.title_label.setStyleSheet(
-                f"color: {c['title_color']}; font-weight: bold; "
-                f"padding: 4px; font-size: 13px;"
-            )
-        if self.close_btn:
-            self.close_btn.setStyleSheet(_close_button_style(c))
+    def set_shift_state(self, pressed):
+        """Called by the manager when the physical Shift key state changes."""
+        pressed = bool(pressed)
+        if pressed == self._shift_state:
+            return
+        self._shift_state = pressed
+        self._refresh_shift_visuals()
+        self._refresh_all_text()
 
-    # ---------------------------------------------------------
-    def eventFilter(self, obj, event):
-        etype = event.type()
-        if etype in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
-            if event.key() == Qt.Key.Key_Shift:
-                is_pressed = (etype == QEvent.Type.KeyPress)
-                if is_pressed != self._shift_state:
-                    self._shift_state = is_pressed
-                    self._refresh_all_buttons()
-        return super().eventFilter(obj, event)
+    def _apply_theme(self):
+        self.setStyleSheet(_build_window_qss(self.theme, "InScriptKeyboardWindow"))
+
+    def _is_shift_active(self):
+        return self._shift_state or self._software_shift
 
     # ---------------------------------------------------------
     def _build_ui(self):
@@ -315,16 +461,18 @@ class InScriptKeyboardWindow(QDialog):
         main_layout.setSpacing(8)
 
         title_bar = QHBoxLayout()
-        self.title_label = QLabel("⌨️  InScript Assamese — drag to move")
+        self.title_label = DragHandle(
+            "⌨️  InScript Assamese — drag here to move", self
+        )
         title_bar.addWidget(self.title_label)
         title_bar.addStretch()
 
-        self.close_btn = QPushButton("✕")
-        self.close_btn.setFixedSize(22, 22)
-        # ✕ only HIDES the layout. The mode stays active — physical
-        # keys keep producing Assamese via the manager's key filter.
-        self.close_btn.clicked.connect(self.hide)
-        title_bar.addWidget(self.close_btn)
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("typingClose")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.clicked.connect(self.hide)
+        title_bar.addWidget(close_btn)
         main_layout.addLayout(title_bar)
 
         for row in KEYBOARD_ROWS:
@@ -333,8 +481,7 @@ class InScriptKeyboardWindow(QDialog):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.addStretch()
             for key_def in row:
-                btn = self._make_key_button(key_def)
-                row_layout.addWidget(btn)
+                row_layout.addWidget(self._make_key_button(key_def))
             row_layout.addStretch()
             main_layout.addLayout(row_layout)
 
@@ -347,89 +494,67 @@ class InScriptKeyboardWindow(QDialog):
         btn.setFixedSize(int(UNIT_W * width_units), UNIT_H)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn._key_def = key_def
-        self._key_buttons.append(btn)
 
-        if action == "shift":
+        if action in ("enter",):
+            btn.setProperty("role", "enter")
+        elif action in ("backspace",):
+            btn.setProperty("role", "backspace")
+        elif action == "shift":
+            btn.setProperty("role", "shift")
+            btn.setProperty("active", "false")
             btn.clicked.connect(self._toggle_software_shift)
-        elif action == "space":
-            btn.clicked.connect(lambda: self.special_key.emit("space"))
-        elif action == "backspace":
+            self._shift_buttons.append(btn)
+        elif action in ("tab", "caps", "ctrl", "alt", "space"):
+            btn.setProperty("role", "special")
+            self._special_buttons.append(btn)
+            if action == "space":
+                btn.clicked.connect(lambda: self.special_key.emit("space"))
+            elif action == "tab":
+                pass  # never supported, kept as visual reference
+            elif action in ("ctrl", "alt", "caps"):
+                pass
+        else:
+            btn.setProperty("role", "char")
+            btn.clicked.connect(lambda checked, b=btn: self._emit_char(b))
+            self._char_buttons.append(btn)
+
+        # special-action buttons that actually emit
+        if action == "backspace":
             btn.clicked.connect(lambda: self.special_key.emit("backspace"))
         elif action == "enter":
             btn.clicked.connect(lambda: self.special_key.emit("enter"))
-        elif action in ("tab", "caps", "ctrl", "win", "alt", "menu"):
-            pass
-        else:
-            btn.clicked.connect(lambda checked, b=btn: self._emit_char(b))
 
-        self._refresh_button(btn)
+        # Initial text
+        if action in ("shift", "tab", "caps", "ctrl", "alt"):
+            btn.setText(label)
+        elif action == "space":
+            btn.setText("Space")
+        elif action in ("enter", "backspace"):
+            btn.setText(label)
+        else:
+            self._set_char_button_text(btn)
+
         return btn
 
     # ---------------------------------------------------------
-    def _char_key_style(self):
-        c = _colors(self.theme)
-        return f"""
-            QPushButton {{
-                background-color: {c['key_bg']};
-                color: {c['key_fg']};
-                border: 1px solid {c['key_border']};
-                border-radius: 5px;
-                font-size: 20px;
-                font-family: "Nirmala UI", "Segoe UI", sans-serif;
-                padding: 2px;
-            }}
-            QPushButton:hover {{
-                background-color: {c['key_hover_bg']};
-                border-color: {c['key_hover_border']};
-            }}
-            QPushButton:pressed {{
-                background-color: {c['key_pressed_bg']};
-                color: {c['key_pressed_fg']};
-            }}
-        """
+    def _set_char_button_text(self, btn):
+        label, normal, shifted, _, _ = btn._key_def
+        char = shifted if self._is_shift_active() else normal
+        btn.setText(f"{char}\n{label}" if char else "")
 
-    def _special_key_style(self, action):
-        c = _colors(self.theme)
-        bg = c["special_bg"]
-        fg = c["special_fg"]
-        if action == "shift":
-            bg = c["shift_bg"]
-        elif action == "enter":
-            bg = c["enter_bg"]
-            fg = "#FFFFFF"
-        elif action == "backspace":
-            bg = c["backspace_bg"]
-            fg = "#FFFFFF"
-        return f"""
-            QPushButton {{
-                background-color: {bg};
-                color: {fg};
-                border: 1px solid {c['key_border']};
-                border-radius: 5px;
-                font-size: 16px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {c['key_hover_bg']};
-            }}
-            QPushButton:pressed {{
-                background-color: {c['key_pressed_bg']};
-                color: {c['key_pressed_fg']};
-            }}
-        """
+    def _refresh_all_text(self):
+        """Only touch .setText() — cheap, no style recomputation."""
+        for btn in self._char_buttons:
+            self._set_char_button_text(btn)
 
-    def _shift_active_style(self):
-        c = _colors(self.theme)
-        return f"""
-            QPushButton {{
-                background-color: {c['shift_active_bg']};
-                color: white;
-                border: 1px solid {c['key_border']};
-                border-radius: 5px;
-                font-size: 16px;
-                font-weight: bold;
-            }}
-        """
+    def _refresh_shift_visuals(self):
+        """Re-polish ONLY the two shift buttons."""
+        active = "true" if self._is_shift_active() else "false"
+        for btn in self._shift_buttons:
+            btn.setProperty("active", active)
+            st = btn.style()
+            st.unpolish(btn)
+            st.polish(btn)
 
     # ---------------------------------------------------------
     def _emit_char(self, btn):
@@ -442,75 +567,27 @@ class InScriptKeyboardWindow(QDialog):
         self.key_clicked.emit(char)
         if self._software_shift:
             self._software_shift = False
-            self._refresh_all_buttons()
+            self._refresh_shift_visuals()
+            self._refresh_all_text()
 
     def _toggle_software_shift(self):
         self._software_shift = not self._software_shift
-        self._refresh_all_buttons()
-
-    def _is_shift_active(self):
-        return self._shift_state or self._software_shift
-
-    # ---------------------------------------------------------
-    def _refresh_all_buttons(self):
-        for btn in self._key_buttons:
-            self._refresh_button(btn)
-
-    def _refresh_button(self, btn):
-        label, normal, shifted, _, action = btn._key_def
-
-        if action in ("shift", "caps", "tab", "enter", "backspace", "space",
-                      "ctrl", "win", "alt", "menu"):
-            if action == "space":
-                btn.setText("Space")
-            else:
-                btn.setText(label)
-            if action == "shift":
-                if self._is_shift_active():
-                    btn.setStyleSheet(self._shift_active_style())
-                else:
-                    btn.setStyleSheet(self._special_key_style("shift"))
-            else:
-                btn.setStyleSheet(self._special_key_style(action))
-            return
-
-        char = shifted if self._is_shift_active() else normal
-        if char:
-            btn.setText(f"{char}\n{label}")
-        else:
-            btn.setText("")
-        btn.setToolTip(
-            f"Key: {label}\nNormal: {normal or '(blank)'}\n"
-            f"Shifted: {shifted or '(blank)'}"
-        )
-        btn.setStyleSheet(self._char_key_style())
+        self._refresh_shift_visuals()
+        self._refresh_all_text()
 
     # ---------------------------------------------------------
     def closeEvent(self, event):
-        # The InScript ✕ only hides the panel, so the standard
-        # 'X' would bypass our hide() call. Route it back to hide.
+        # Safety: closing the widget hides it; the mode stays active.
         event.ignore()
         self.hide()
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_position = (
-                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            )
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_position)
-            event.accept()
-
 
 # ==================================================================
-# 5. Mouse Typing window
+# 4. Mouse Typing window
 # ==================================================================
 class MouseTypingWindow(QDialog):
     key_clicked = pyqtSignal(str)
-    closed_by_user = pyqtSignal()   # fires when the ✕ is pressed
+    closed_by_user = pyqtSignal()
 
     KEY_SIZE = 52
     KEY_SPACING = 5
@@ -521,66 +598,22 @@ class MouseTypingWindow(QDialog):
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # PERF: don't steal focus.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         self.theme = theme
-        self._drag_position = QPoint()
-        self.title_label = None
-        self.close_btn = None
-        self.divider = None
         self._build_ui()
-        self._apply_stylesheet()
+        self._apply_theme()
 
-    # ---------------------------------------------------------
     def set_theme(self, theme):
+        if theme == self.theme:
+            return
         self.theme = theme
-        self._apply_stylesheet()
-        for btn in self.findChildren(QPushButton):
-            if btn is self.close_btn:
-                continue
-            btn.setStyleSheet(self._key_style())
+        self._apply_theme()
 
-    def _apply_stylesheet(self):
-        c = _colors(self.theme)
-        self.setStyleSheet(f"""
-            MouseTypingWindow {{
-                background-color: {c['window_bg']};
-                border: 2px solid {c['window_border']};
-                border-radius: 10px;
-            }}
-        """)
-        if self.title_label:
-            self.title_label.setStyleSheet(
-                f"color: {c['title_color']}; font-weight: bold; "
-                f"padding: 4px; font-size: 13px;"
-            )
-        if self.close_btn:
-            self.close_btn.setStyleSheet(_close_button_style(c))
-        if self.divider:
-            self.divider.setStyleSheet(
-                f"color: {c['divider']}; background-color: {c['divider']};"
-            )
-
-    # ---------------------------------------------------------
-    def _key_style(self):
-        c = _colors(self.theme)
-        return f"""
-            QPushButton {{
-                background-color: {c['key_bg']};
-                color: {c['key_fg']};
-                border: 1px solid {c['key_border']};
-                border-radius: 6px;
-                font-size: 16px;
-                font-family: "Nirmala UI", "Segoe UI", sans-serif;
-            }}
-            QPushButton:hover {{
-                background-color: {c['key_hover_bg']};
-                border-color: {c['key_hover_border']};
-            }}
-            QPushButton:pressed {{
-                background-color: {c['key_pressed_bg']};
-                color: {c['key_pressed_fg']};
-            }}
-        """
+    def _apply_theme(self):
+        self.setStyleSheet(_build_window_qss(self.theme, "MouseTypingWindow"))
 
     # ---------------------------------------------------------
     def _build_ui(self):
@@ -589,21 +622,24 @@ class MouseTypingWindow(QDialog):
         main_layout.setSpacing(10)
 
         title_bar = QHBoxLayout()
-        self.title_label = QLabel("🖱️  Mouse Typing — click any letter")
+        self.title_label = DragHandle(
+            "🖱️  Mouse Typing — drag here to move", self
+        )
         title_bar.addWidget(self.title_label)
         title_bar.addStretch()
 
-        self.close_btn = QPushButton("✕")
-        self.close_btn.setFixedSize(22, 22)
-        # ✕ here EXITS the mode — main app resets the dropdown.
-        self.close_btn.clicked.connect(self.close)
-        title_bar.addWidget(self.close_btn)
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("typingClose")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.clicked.connect(self.close)
+        title_bar.addWidget(close_btn)
         main_layout.addLayout(title_bar)
 
         content = QHBoxLayout()
         content.setSpacing(16)
 
-        # Left: consonants
+        # Left column
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(6)
@@ -624,13 +660,13 @@ class MouseTypingWindow(QDialog):
         left_layout.addStretch()
         content.addWidget(left_widget)
 
-        self.divider = QFrame()
-        self.divider.setFrameShape(QFrame.Shape.VLine)
-        self.divider.setFrameShadow(QFrame.Shadow.Plain)
-        self.divider.setFixedWidth(2)
-        content.addWidget(self.divider)
+        divider = QFrame()
+        divider.setObjectName("typingDivider")
+        divider.setFrameShape(QFrame.Shape.VLine)
+        divider.setFixedWidth(2)
+        content.addWidget(divider)
 
-        # Right: vowels
+        # Right column
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setSpacing(6)
@@ -653,46 +689,23 @@ class MouseTypingWindow(QDialog):
         btn = QPushButton(display)
         btn.setFixedSize(self.KEY_SIZE, self.KEY_SIZE)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setToolTip(f"Insert: {value}")
-        btn.setStyleSheet(self._key_style())
+        btn.setProperty("role", "letter")
+        # PERF/UX: no tooltip — it was distracting and added per-widget cost.
         btn.clicked.connect(lambda checked, v=value: self.key_clicked.emit(v))
         return btn
 
     # ---------------------------------------------------------
     def closeEvent(self, event):
-        # User pressed ✕. Tell the manager, hide the widget (so it can
-        # be re-shown without rebuilding), and swallow the close.
         self.closed_by_user.emit()
         event.ignore()
         self.hide()
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_position = (
-                event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            )
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_position)
-            event.accept()
-
 
 # ==================================================================
-# 6. Manager
+# 5. Manager
 # ==================================================================
 class TypingModeManager(QObject):
-    """
-    Hooks InScript / Mouse-Typing windows onto an existing text editor.
-
-    Signals
-    -------
-    mode_closed
-        Emitted ONLY when the Mouse Typing panel is closed by the user.
-        Main app uses this to reset the dropdown to Live AI / Built-In AI.
-        (InScript hides without emitting, since the mode stays active.)
-    """
+    """Hooks InScript / Mouse-Typing windows onto an existing text editor."""
     mode_closed = pyqtSignal()
 
     def __init__(self, main_window, text_editor, theme="dark"):
@@ -710,7 +723,6 @@ class TypingModeManager(QObject):
     # ----- public -----
     def set_mode(self, mode):
         if mode == self.current_mode:
-            # Already in this mode — re-show the window if it was hidden.
             if mode == "inscript":
                 self._show_inscript()
             elif mode == "mouse":
@@ -752,7 +764,8 @@ class TypingModeManager(QObject):
         self._position_window(self.inscript_window)
         self.inscript_window.show()
         self.inscript_window.raise_()
-        self.text_editor.setFocus()
+        # PERF: NO setFocus here — WA_ShowWithoutActivating keeps the
+        # editor focused, so nothing is stolen and no scroll happens.
 
     def _hide_inscript(self):
         if self.inscript_window is not None:
@@ -764,19 +777,16 @@ class TypingModeManager(QObject):
                 self.main_window, theme=self.theme
             )
             self.mouse_window.key_clicked.connect(self._insert_text)
-            # Only the mouse panel resets the mode when closed.
             self.mouse_window.closed_by_user.connect(self._on_mouse_closed)
         self._position_window(self.mouse_window)
         self.mouse_window.show()
         self.mouse_window.raise_()
-        self.text_editor.setFocus()
 
     def _hide_mouse(self):
         if self.mouse_window is not None:
             self.mouse_window.hide()
 
     def _on_mouse_closed(self):
-        """User pressed ✕ on the Mouse Typing panel — exit the mode."""
         self.current_mode = "none"
         self.mode_closed.emit()
 
@@ -795,7 +805,6 @@ class TypingModeManager(QObject):
         if not text:
             return
         self.text_editor.insertPlainText(text)
-        self.text_editor.setFocus()
 
     def _handle_special(self, key):
         if key == "space":
@@ -805,16 +814,29 @@ class TypingModeManager(QObject):
             cursor.deletePreviousChar()
         elif key == "enter":
             self.text_editor.insertPlainText("\n")
-        self.text_editor.setFocus()
 
-    # ----- key hook -----
+    # ----- the key filter -----
     def eventFilter(self, obj, event):
-        if obj is self.text_editor and event.type() == QEvent.Type.KeyPress:
-            if self.current_mode == "inscript":
-                return self._handle_inscript_keypress(event)
+        if obj is self.text_editor:
+            etype = event.type()
+            if etype == QEvent.Type.KeyPress:
+                if self.current_mode == "inscript":
+                    if event.key() == Qt.Key.Key_Shift:
+                        if self.inscript_window is not None:
+                            self.inscript_window.set_shift_state(True)
+                    return self._handle_inscript_keypress(event)
+            elif etype == QEvent.Type.KeyRelease:
+                if self.current_mode == "inscript":
+                    if event.key() == Qt.Key.Key_Shift:
+                        if self.inscript_window is not None:
+                            self.inscript_window.set_shift_state(False)
         return super().eventFilter(obj, event)
 
     def _handle_inscript_keypress(self, event):
+        # Shift alone — let it through so selection still works
+        if event.key() == Qt.Key.Key_Shift:
+            return False
+
         if event.key() == Qt.Key.Key_Space:
             self.text_editor.insertPlainText(" ")
             return True
