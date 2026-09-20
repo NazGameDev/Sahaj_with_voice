@@ -1,13 +1,12 @@
 """
 typing_modes.py — Pluggable typing modes for সহজ-Sahaj.
 
-Adds two alternative typing modes to the main application:
-  * InScript   — physical keyboard mapped to Assamese + on-screen keyboard.
-  * Mouse      — click-to-insert Assamese letters panel.
-
-Both windows follow the app's light / dark theme.
+Mouse Typing:
+    Closing the panel  →  exits the mode; main app resets the dropdown.
+InScript Typing:
+    Closing the panel  →  only hides the visual keyboard. The mode stays
+                          active so physical keys keep producing Assamese.
 """
-import sys
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
     QApplication,
@@ -322,6 +321,8 @@ class InScriptKeyboardWindow(QDialog):
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(22, 22)
+        # ✕ only HIDES the layout. The mode stays active — physical
+        # keys keep producing Assamese via the manager's key filter.
         self.close_btn.clicked.connect(self.hide)
         title_bar.addWidget(self.close_btn)
         main_layout.addLayout(title_bar)
@@ -486,10 +487,10 @@ class InScriptKeyboardWindow(QDialog):
 
     # ---------------------------------------------------------
     def closeEvent(self, event):
-        app = QApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
-        super().closeEvent(event)
+        # The InScript ✕ only hides the panel, so the standard
+        # 'X' would bypass our hide() call. Route it back to hide.
+        event.ignore()
+        self.hide()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -509,6 +510,7 @@ class InScriptKeyboardWindow(QDialog):
 # ==================================================================
 class MouseTypingWindow(QDialog):
     key_clicked = pyqtSignal(str)
+    closed_by_user = pyqtSignal()   # fires when the ✕ is pressed
 
     KEY_SIZE = 52
     KEY_SPACING = 5
@@ -532,7 +534,6 @@ class MouseTypingWindow(QDialog):
     def set_theme(self, theme):
         self.theme = theme
         self._apply_stylesheet()
-        # Refresh every key button
         for btn in self.findChildren(QPushButton):
             if btn is self.close_btn:
                 continue
@@ -594,7 +595,8 @@ class MouseTypingWindow(QDialog):
 
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(22, 22)
-        self.close_btn.clicked.connect(self.hide)
+        # ✕ here EXITS the mode — main app resets the dropdown.
+        self.close_btn.clicked.connect(self.close)
         title_bar.addWidget(self.close_btn)
         main_layout.addLayout(title_bar)
 
@@ -657,6 +659,13 @@ class MouseTypingWindow(QDialog):
         return btn
 
     # ---------------------------------------------------------
+    def closeEvent(self, event):
+        # User pressed ✕. Tell the manager, hide the widget (so it can
+        # be re-shown without rebuilding), and swallow the close.
+        self.closed_by_user.emit()
+        event.ignore()
+        self.hide()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_position = (
@@ -671,12 +680,21 @@ class MouseTypingWindow(QDialog):
 
 
 # ==================================================================
-# 6. Manager — the only thing main.py talks to
+# 6. Manager
 # ==================================================================
 class TypingModeManager(QObject):
     """
     Hooks InScript / Mouse-Typing windows onto an existing text editor.
+
+    Signals
+    -------
+    mode_closed
+        Emitted ONLY when the Mouse Typing panel is closed by the user.
+        Main app uses this to reset the dropdown to Live AI / Built-In AI.
+        (InScript hides without emitting, since the mode stays active.)
     """
+    mode_closed = pyqtSignal()
+
     def __init__(self, main_window, text_editor, theme="dark"):
         super().__init__(main_window)
         self.main_window = main_window
@@ -692,9 +710,14 @@ class TypingModeManager(QObject):
     # ----- public -----
     def set_mode(self, mode):
         if mode == self.current_mode:
+            # Already in this mode — re-show the window if it was hidden.
+            if mode == "inscript":
+                self._show_inscript()
+            elif mode == "mouse":
+                self._show_mouse()
             return
-        self.current_mode = mode
 
+        self.current_mode = mode
         self._hide_inscript()
         self._hide_mouse()
 
@@ -704,7 +727,6 @@ class TypingModeManager(QObject):
             self._show_mouse()
 
     def set_theme(self, theme):
-        """Called from main.toggle_theme() so live windows follow the theme."""
         self.theme = theme
         if self.inscript_window is not None:
             self.inscript_window.set_theme(theme)
@@ -742,6 +764,8 @@ class TypingModeManager(QObject):
                 self.main_window, theme=self.theme
             )
             self.mouse_window.key_clicked.connect(self._insert_text)
+            # Only the mouse panel resets the mode when closed.
+            self.mouse_window.closed_by_user.connect(self._on_mouse_closed)
         self._position_window(self.mouse_window)
         self.mouse_window.show()
         self.mouse_window.raise_()
@@ -750,6 +774,11 @@ class TypingModeManager(QObject):
     def _hide_mouse(self):
         if self.mouse_window is not None:
             self.mouse_window.hide()
+
+    def _on_mouse_closed(self):
+        """User pressed ✕ on the Mouse Typing panel — exit the mode."""
+        self.current_mode = "none"
+        self.mode_closed.emit()
 
     def _position_window(self, win):
         try:
