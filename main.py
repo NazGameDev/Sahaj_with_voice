@@ -113,7 +113,7 @@ else:
 
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
-                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox)
+                             QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox, QListView)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
 
@@ -345,12 +345,6 @@ QMenu::item:selected {
     background-color: #0D6EFD;
     color: #FFFFFF;
 }
-QComboBoxPrivateContainer {
-    border: none;
-    background: transparent;
-    margin: 4px 0px;
-    padding: 0px;
-}
 QMenu::separator {
     height: 1px;
     background-color: #CED4DA;
@@ -558,19 +552,12 @@ QMenu::item:selected {
     background-color: #007ACC;
     color: #FFFFFF;
 }
-QComboBoxPrivateContainer {
-    border: none;
-    background: transparent;
-    margin: 4px 0px;
-    padding: 0px;
-}
 QMenu::separator {
     height: 1px;
     background-color: #555555;
     margin: 4px 0px;
 }
 """
-
 
 class DictionarySpellChecker:
     def __init__(self, dict_file="assamese_dictionary.txt"):
@@ -1276,6 +1263,42 @@ class AppLoaderThread(QThread):
 
         self.finished_loading.emit(spell_tool, dictionary, xlit_engine)
 
+class ModernComboBox(QComboBox):
+    """
+    A QComboBox with a fully-styleable, bezel-free popup.
+
+    * Uses a plain QListView as the popup (no Fusion bezel).
+    * Strips the private QComboBoxPrivateContainer frame from Python,
+      which cannot be reached via stylesheet on some Qt builds.
+    * Applies the popup font directly on the view, so it always matches
+      the closed combo box font.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Use a plain list view for the popup
+        view = QListView()
+        view.setUniformItemSizes(True)
+        view.setSpacing(2)
+        self.setView(view)
+
+        # Font for the popup — same size as the combo box itself
+        popup_font = QFont()
+        popup_font.setPointSize(11)   # ~14 px, matches your toolbar
+        popup_font.setBold(True)
+        view.setFont(popup_font)
+
+    def showPopup(self):
+        super().showPopup()
+        # Kill the private container's bezel/background from Python.
+        # This is the step that actually removes the dark bars.
+        container = self.view().window()
+        if container is not None:
+            container.setStyleSheet(
+                "QFrame { border: none; background: transparent;"
+                " margin: 0px; padding: 0px; }"
+            )
 
 class AssameseTypingApp(QMainWindow):
     def __init__(self):
@@ -1571,7 +1594,7 @@ class AssameseTypingApp(QMainWindow):
         self.phonetic_btn.toggled.connect(self.toggle_phonetic)
         
         # --- Mode dropdown: Live AI / Built-In AI / Mouse Typing / InScript Typing ---
-        self.engine_combo = QComboBox()
+        self.engine_combo = ModernComboBox()
         self.engine_combo.setToolTip(
             "Choose the translation engine or a typing mode.\n"
             "• Live AI       – online transliteration (Google)\n"
@@ -1582,10 +1605,6 @@ class AssameseTypingApp(QMainWindow):
         self.engine_combo.addItems(
             ["Live AI", "Built-In AI", "Mouse Typing", "Inscript Typing"]
         )
-        # Use a plain QListView as the popup so Fusion's thick popup bezel
-        # disappears — gives us a modern, web-style dropdown.
-        from PyQt6.QtWidgets import QListView
-        self.engine_combo.setView(QListView())
         if not HAS_TYPING_MODES:
             # Grey out the typing-mode entries if the module couldn't load
             model = self.engine_combo.model()
