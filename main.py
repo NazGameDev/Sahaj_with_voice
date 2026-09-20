@@ -305,12 +305,26 @@ QComboBox::down-arrow {
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
     color: #333333;
-    border: 1px solid #DEE2E6;
-    border-radius: 6px;
-    selection-background-color: #0D6EFD;
-    selection-color: #FFFFFF;
+    border: 1px solid #E1E4E8;
+    border-radius: 8px;
     outline: 0;
-    padding: 4px;
+    padding: 6px;
+    selection-background-color: transparent;
+    selection-color: #0C63E4;
+}
+QComboBox QAbstractItemView::item {
+    padding: 8px 14px;
+    border-radius: 5px;
+    min-height: 22px;
+    color: #333333;
+}
+QComboBox QAbstractItemView::item:hover {
+    background-color: #F1F3F5;
+    color: #0C63E4;
+}
+QComboBox QAbstractItemView::item:selected {
+    background-color: #E7F1FF;
+    color: #0C63E4;
 }
 QMenu {
     background-color: #FFFFFF;
@@ -496,12 +510,26 @@ QComboBox::down-arrow {
 QComboBox QAbstractItemView {
     background-color: #1E1E1E;
     color: #E0E0E0;
-    border: 1px solid #777777;
-    border-radius: 6px;
-    selection-background-color: #0D6EFD;
-    selection-color: #FFFFFF;
+    border: 1px solid #4A4A4A;
+    border-radius: 8px;
     outline: 0;
-    padding: 4px;
+    padding: 6px;
+    selection-background-color: transparent;
+    selection-color: #86B7FE;
+}
+QComboBox QAbstractItemView::item {
+    padding: 8px 14px;
+    border-radius: 5px;
+    min-height: 22px;
+    color: #E0E0E0;
+}
+QComboBox QAbstractItemView::item:hover {
+    background-color: #3A3A3A;
+    color: #86B7FE;
+}
+QComboBox QAbstractItemView::item:selected {
+    background-color: #094771;
+    color: #FFFFFF;
 }
 QMenu {
     background-color: #2C2C2C;
@@ -1538,6 +1566,10 @@ class AssameseTypingApp(QMainWindow):
         self.engine_combo.addItems(
             ["Live AI", "Built-In AI", "Mouse Typing", "Inscript Typing"]
         )
+        # Use a plain QListView as the popup so Fusion's thick popup bezel
+        # disappears — gives us a modern, web-style dropdown.
+        from PyQt6.QtWidgets import QListView
+        self.engine_combo.setView(QListView())
         if not HAS_TYPING_MODES:
             # Grey out the typing-mode entries if the module couldn't load
             model = self.engine_combo.model()
