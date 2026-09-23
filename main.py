@@ -1216,6 +1216,7 @@ class PhoneticTextEdit(QPlainTextEdit):
                         break
 
         # -------- Build the menu --------
+        menu = QMenu(self)
         menu_font = QFont()
         menu_font.setFamilies(CUSTOM_FONT_FAMILIES)
         menu_font.setPointSize(10)
