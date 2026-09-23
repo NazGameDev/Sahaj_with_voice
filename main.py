@@ -114,7 +114,7 @@ else:
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
                              QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox, QListView)
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings, QEvent
 from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor, QAction)
 from PyQt6.QtNetwork import QNetworkInformation
 
@@ -731,13 +731,16 @@ class EnglishToAssameseWorker(QThread):
 
 class MeaningPopup(QDialog):
     """
-    Small floating card that shows the English meaning of Assamese text,
-    with a Copy button. Closes automatically when the user clicks outside.
+    Small floating card showing the English meaning of Assamese text.
+    * Matches app light/dark theme (theme is passed in explicitly).
+    * Red circular ✕ button (white cross, fades slightly on hover).
+    * Closes on ✕, Escape, or clicking anywhere outside the popup.
     """
 
-    def __init__(self, meaning_text, parent=None):
+    def __init__(self, meaning_text, parent=None, theme="dark"):
         super().__init__(parent)
         self.meaning_text = meaning_text or ""
+        self._theme = theme
 
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -747,17 +750,35 @@ class MeaningPopup(QDialog):
         self.setFixedWidth(340)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 10, 14, 12)
+        layout.setSpacing(8)
 
-        header = QLabel("📖  English meaning")
+        # ---------- Header row: title (left) + ✕ (right) ----------
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(6)
+
+        header = QLabel("📖 English meaning")
         header_font = QFont()
         header_font.setFamilies(CUSTOM_FONT_FAMILIES)
         header_font.setPointSize(10)
         header_font.setBold(True)
         header.setFont(header_font)
-        layout.addWidget(header)
+        header_row.addWidget(header)
+        header_row.addStretch()
 
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setObjectName("meaningClose")
+        self.close_btn.setFixedSize(22, 22)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_btn.setToolTip("Close (Esc)")
+        self.close_btn.clicked.connect(self.close)
+        header_row.addWidget(self.close_btn)
+
+        layout.addLayout(header_row)
+
+        # ---------- Meaning text ----------
         self.text_label = QLabel(self.meaning_text if self.meaning_text else "No translation found")
         self.text_label.setWordWrap(True)
         self.text_label.setTextInteractionFlags(
@@ -769,21 +790,26 @@ class MeaningPopup(QDialog):
         self.text_label.setFont(body_font)
         layout.addWidget(self.text_label)
 
-        self.copy_btn = QPushButton("📋  Copy meaning")
+        # ---------- Copy button ----------
+        self.copy_btn = QPushButton("📋 Copy meaning")
+        self.copy_btn.setObjectName("meaningCopy")
         self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self.copy_btn)
 
-        # Apply theme so the popup matches the app
-        dark = True
-        w = parent
-        while w is not None:
-            if hasattr(w, "current_theme"):
-                dark = (w.current_theme == "dark")
-                break
-            w = w.parent()
+        # ---------- Apply theme ----------
+        self._apply_theme()
 
-        if dark:
+        # ---------- Install click-outside watcher ----------
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+        self.adjustSize()
+
+    # ---------------------------------------------------------
+    def _apply_theme(self):
+        if self._theme == "dark":
             self.setStyleSheet("""
                 MeaningPopup {
                     background-color: #2C2C2C;
@@ -794,7 +820,22 @@ class MeaningPopup(QDialog):
                     color: #E0E0E0;
                     background: transparent;
                 }
-                QPushButton {
+                QPushButton#meaningClose {
+                    background-color: #DC3545;
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 11px;
+                    font-size: 13px;
+                    font-weight: bold;
+                    padding: 0px;
+                }
+                QPushButton#meaningClose:hover {
+                    background-color: #E4606D;
+                }
+                QPushButton#meaningClose:pressed {
+                    background-color: #BB2D3B;
+                }
+                QPushButton#meaningCopy {
                     background-color: #0D6EFD;
                     color: white;
                     border: none;
@@ -802,8 +843,8 @@ class MeaningPopup(QDialog):
                     padding: 6px 12px;
                     font-weight: bold;
                 }
-                QPushButton:hover   { background-color: #0B5ED7; }
-                QPushButton:pressed { background-color: #0A58CA; }
+                QPushButton#meaningCopy:hover   { background-color: #0B5ED7; }
+                QPushButton#meaningCopy:pressed { background-color: #0A58CA; }
             """)
         else:
             self.setStyleSheet("""
@@ -816,7 +857,22 @@ class MeaningPopup(QDialog):
                     color: #333333;
                     background: transparent;
                 }
-                QPushButton {
+                QPushButton#meaningClose {
+                    background-color: #DC3545;
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 11px;
+                    font-size: 13px;
+                    font-weight: bold;
+                    padding: 0px;
+                }
+                QPushButton#meaningClose:hover {
+                    background-color: #E4606D;
+                }
+                QPushButton#meaningClose:pressed {
+                    background-color: #BB2D3B;
+                }
+                QPushButton#meaningCopy {
                     background-color: #0D6EFD;
                     color: white;
                     border: none;
@@ -824,19 +880,53 @@ class MeaningPopup(QDialog):
                     padding: 6px 12px;
                     font-weight: bold;
                 }
-                QPushButton:hover   { background-color: #0B5ED7; }
-                QPushButton:pressed { background-color: #0A58CA; }
+                QPushButton#meaningCopy:hover   { background-color: #0B5ED7; }
+                QPushButton#meaningCopy:pressed { background-color: #0A58CA; }
             """)
 
-        self.adjustSize()
-
+    # ---------------------------------------------------------
     def _on_copy_clicked(self):
         QApplication.clipboard().setText(self.meaning_text or "")
-        self.copy_btn.setText("✅  Copied!")
+        self.copy_btn.setText("✅ Copied!")
         QTimer.singleShot(800, self.close)
 
+    # ---------------------------------------------------------
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    # ---------------------------------------------------------
+    def eventFilter(self, obj, event):
+        """
+        Watches ALL app events. If the user presses the mouse outside
+        this popup's rectangle, we close it. This gives us reliable
+        'click anywhere else to dismiss' behavior.
+        """
+        if event.type() == QEvent.Type.MouseButtonPress and self.isVisible():
+            try:
+                global_pos = event.globalPosition().toPoint()
+                if not self.geometry().contains(global_pos):
+                    self.close()
+            except Exception:
+                pass
+        return super().eventFilter(obj, event)
+
+    # ---------------------------------------------------------
+    def closeEvent(self, event):
+        # Always remove the app-wide filter so we don't linger.
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
+        super().closeEvent(event)
+
+    # ---------------------------------------------------------
     def show_at(self, global_pos):
-        """Position the popup near the given global point, keeping it on screen."""
+        """Position the popup near a global point, keeping it on screen."""
         screen = QApplication.primaryScreen().availableGeometry()
         w = self.width()
         h = self.height()
@@ -854,12 +944,7 @@ class MeaningPopup(QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
-
-    def focusOutEvent(self, event):
-        # Close when the user clicks elsewhere
-        self.close()
-        super().focusOutEvent(event)
-
+        self.setFocus()
 
 class PhoneticTextEdit(QPlainTextEdit):
     def __init__(self, parent=None):
@@ -1131,16 +1216,14 @@ class PhoneticTextEdit(QPlainTextEdit):
                         break
 
         # -------- Build the menu --------
-        menu = QMenu(self)
         menu_font = QFont()
         menu_font.setFamilies(CUSTOM_FONT_FAMILIES)
-        editor_size = self.font().pointSize()
-        menu_font.setPointSize(max(8, editor_size - 3))
+        menu_font.setPointSize(10)
         menu.setFont(menu_font)
 
         # ---- 1) Show meaning (always the FIRST item) ----
         if has_assamese and len(lookup_text) >= 1:
-            meaning_action = menu.addAction("📖  Show meaning")
+            meaning_action = menu.addAction("📖 Show meaning")
             meaning_action.triggered.connect(
                 lambda checked=False, t=lookup_text[:500], p=event.globalPos():
                     self._show_meaning_popup(t, p)
@@ -1214,7 +1297,7 @@ class PhoneticTextEdit(QPlainTextEdit):
             self._meaning_popup = None
 
         # Show "Loading…" immediately so the user sees a response
-        loading = MeaningPopup("Loading…", parent=self.window())
+        loading = MeaningPopup("Loading…", parent=self.window(), theme=self._current_theme_name())
         loading.show_at(global_pos)
         self._meaning_popup = loading
 
@@ -1230,7 +1313,7 @@ class PhoneticTextEdit(QPlainTextEdit):
             except Exception:
                 pass
             result_text = meaning if meaning else "No translation found"
-            new_popup = MeaningPopup(result_text, parent=self.window())
+            new_popup = MeaningPopup(result_text, parent=self.window(), theme=self._current_theme_name())
             new_popup.show_at(pos)
             self._meaning_popup = new_popup
 
@@ -1248,6 +1331,15 @@ class PhoneticTextEdit(QPlainTextEdit):
                 pass
         worker.finished.connect(_cleanup)
         worker.start()
+
+    def _current_theme_name(self):
+        """Return 'dark' or 'light' based on the main window's current theme."""
+        w = self.window()
+        while w is not None:
+            if hasattr(w, "current_theme"):
+                return w.current_theme
+            w = w.parent()
+        return "dark"
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
