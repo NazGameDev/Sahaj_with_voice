@@ -115,7 +115,7 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel,
                              QInputDialog, QMessageBox, QListWidget, QScrollArea, QMenu, QToolTip, QSplashScreen, QDialog, QLineEdit, QCheckBox, QProgressBar, QPlainTextEdit, QComboBox, QListView)
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QMimeData, QPoint, QSettings
-from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor)
+from PyQt6.QtGui import (QFont, QTextCursor, QTextCharFormat, QSyntaxHighlighter, QColor, QDrag, QPixmap, QMovie, QIcon, QCursor, QAction)
 from PyQt6.QtNetwork import QNetworkInformation
 
 
@@ -729,6 +729,138 @@ class EnglishToAssameseWorker(QThread):
             self.translation_fetched.emit("Error")
 
 
+class MeaningPopup(QDialog):
+    """
+    Small floating card that shows the English meaning of Assamese text,
+    with a Copy button. Closes automatically when the user clicks outside.
+    """
+
+    def __init__(self, meaning_text, parent=None):
+        super().__init__(parent)
+        self.meaning_text = meaning_text or ""
+
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setFixedWidth(340)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        header = QLabel("📖  English meaning")
+        header_font = QFont()
+        header_font.setFamilies(CUSTOM_FONT_FAMILIES)
+        header_font.setPointSize(10)
+        header_font.setBold(True)
+        header.setFont(header_font)
+        layout.addWidget(header)
+
+        self.text_label = QLabel(self.meaning_text if self.meaning_text else "No translation found")
+        self.text_label.setWordWrap(True)
+        self.text_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        body_font = QFont()
+        body_font.setFamilies(CUSTOM_FONT_FAMILIES)
+        body_font.setPointSize(11)
+        self.text_label.setFont(body_font)
+        layout.addWidget(self.text_label)
+
+        self.copy_btn = QPushButton("📋  Copy meaning")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._on_copy_clicked)
+        layout.addWidget(self.copy_btn)
+
+        # Apply theme so the popup matches the app
+        dark = True
+        w = parent
+        while w is not None:
+            if hasattr(w, "current_theme"):
+                dark = (w.current_theme == "dark")
+                break
+            w = w.parent()
+
+        if dark:
+            self.setStyleSheet("""
+                MeaningPopup {
+                    background-color: #2C2C2C;
+                    border: 1px solid #666666;
+                    border-radius: 8px;
+                }
+                QLabel {
+                    color: #E0E0E0;
+                    background: transparent;
+                }
+                QPushButton {
+                    background-color: #0D6EFD;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover   { background-color: #0B5ED7; }
+                QPushButton:pressed { background-color: #0A58CA; }
+            """)
+        else:
+            self.setStyleSheet("""
+                MeaningPopup {
+                    background-color: #FFFFFF;
+                    border: 1px solid #CED4DA;
+                    border-radius: 8px;
+                }
+                QLabel {
+                    color: #333333;
+                    background: transparent;
+                }
+                QPushButton {
+                    background-color: #0D6EFD;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover   { background-color: #0B5ED7; }
+                QPushButton:pressed { background-color: #0A58CA; }
+            """)
+
+        self.adjustSize()
+
+    def _on_copy_clicked(self):
+        QApplication.clipboard().setText(self.meaning_text or "")
+        self.copy_btn.setText("✅  Copied!")
+        QTimer.singleShot(800, self.close)
+
+    def show_at(self, global_pos):
+        """Position the popup near the given global point, keeping it on screen."""
+        screen = QApplication.primaryScreen().availableGeometry()
+        w = self.width()
+        h = self.height()
+        x = global_pos.x()
+        y = global_pos.y() + 14
+        if x + w > screen.right():
+            x = screen.right() - w - 8
+        if x < screen.left():
+            x = screen.left() + 8
+        if y + h > screen.bottom():
+            y = global_pos.y() - h - 14
+        if y < screen.top():
+            y = screen.top() + 8
+        self.move(x, y)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def focusOutEvent(self, event):
+        # Close when the user clicks elsewhere
+        self.close()
+        super().focusOutEvent(event)
+
+
 class PhoneticTextEdit(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -875,57 +1007,6 @@ class PhoneticTextEdit(QPlainTextEdit):
             self.suggestion_list.hide()
         super().mousePressEvent(event)
 
-    def mouseReleaseEvent(self, event):
-        super().mouseReleaseEvent(event)
-
-        cursor = self.textCursor()
-        if not cursor.hasSelection():
-            return
-
-        selected = cursor.selectedText().strip()
-        # QTextCursor uses U+2029 for line breaks — normalise
-        selected = selected.replace("\u2029", " ").strip()
-
-        if not selected or len(selected) < 2:
-            return
-
-        # Only handle selections that actually contain Assamese script
-        if not re.search(r'[\u0980-\u09FF]', selected):
-            return
-
-        # Limit to what MyMemory accepts (roughly 500 chars)
-        if len(selected) > 500:
-            selected = selected[:500]
-
-        self._fetch_selection_meaning(selected, event.globalPosition().toPoint())
-
-    def _fetch_selection_meaning(self, text, global_pos):
-        # Keep a reference so the thread isn't garbage-collected
-        if not hasattr(self, "_selection_workers"):
-            self._selection_workers = []
-
-        worker = MeaningWorker(text)
-
-        def _cleanup(*_):
-            try:
-                self._selection_workers.remove(worker)
-            except ValueError:
-                pass
-
-        worker.meaning_fetched.connect(
-            lambda _word, meaning, pos=global_pos: self._show_selection_tooltip(meaning, pos)
-        )
-        worker.finished.connect(_cleanup)
-        self._selection_workers.append(worker)
-        worker.start()
-
-    def _show_selection_tooltip(self, meaning, global_pos):
-        if meaning:
-            safe = html.unescape(meaning)
-            QToolTip.showText(global_pos, safe, self)
-        else:
-            QToolTip.showText(global_pos, "No translation found", self)
-
     def focusOutEvent(self, event):
         if self.suggestion_list.isVisible():
             cursor_pos = self.suggestion_list.mapFromGlobal(QCursor.pos())
@@ -1014,79 +1095,159 @@ class PhoneticTextEdit(QPlainTextEdit):
 
     def contextMenuEvent(self, event):
         main_win = self.window()
-        if not isinstance(main_win, AssameseTypingApp):
-            super().contextMenuEvent(event)
-            return
+        is_main_app = isinstance(main_win, AssameseTypingApp)
 
-        cursor = self.cursorForPosition(event.pos())
-        pos = cursor.position()
-        text = self.toPlainText()
+        # -------- What text should we look up? --------
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            lookup_text = cursor.selectedText().replace("\u2029", " ").strip()
+        else:
+            word_cursor = self.cursorForPosition(event.pos())
+            word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+            lookup_text = word_cursor.selectedText().strip()
 
-        start = pos
-        end = pos
+        has_assamese = bool(re.search(r'[\u0980-\u09FF]', lookup_text))
 
-        while start > 0 and re.match(r'[\u0980-\u09FF\u200C\u200D]', text[start - 1]):
-            start -= 1
+        # -------- Misspelled word under cursor (only when nothing is selected) --------
+        misspelled_word = None
+        misspelled_range = None
+        misspelled_suggestions = None
+        if is_main_app and not cursor.hasSelection():
+            text = self.toPlainText()
+            pos = self.cursorForPosition(event.pos()).position()
+            start = pos
+            end = pos
+            while start > 0 and re.match(r'[\u0980-\u09FF\u200C\u200D]', text[start - 1]):
+                start -= 1
+            while end < len(text) and re.match(r'[\u0980-\u09FF\u200C\u200D]', text[end]):
+                end += 1
+            candidate = text[start:end].strip()
+            if candidate and re.search(r'[\u0980-\u09FF]', candidate):
+                for err_start, err_end, suggestions in main_win.spell_errors:
+                    if start == err_start and end == err_end:
+                        misspelled_word = text[start:end]
+                        misspelled_range = (start, end)
+                        misspelled_suggestions = suggestions
+                        break
 
-        while end < len(text) and re.match(r'[\u0980-\u09FF\u200C\u200D]', text[end]):
-            end += 1
+        # -------- Build the menu --------
+        menu = QMenu(self)
+        menu_font = QFont()
+        menu_font.setFamilies(CUSTOM_FONT_FAMILIES)
+        editor_size = self.font().pointSize()
+        menu_font.setPointSize(max(8, editor_size - 3))
+        menu.setFont(menu_font)
 
-        word = text[start:end].strip()
-        is_assamese = bool(re.search(r'[\u0980-\u09FF]', word))
+        # ---- 1) Show meaning (always the FIRST item) ----
+        if has_assamese and len(lookup_text) >= 1:
+            meaning_action = menu.addAction("📖  Show meaning")
+            meaning_action.triggered.connect(
+                lambda checked=False, t=lookup_text[:500], p=event.globalPos():
+                    self._show_meaning_popup(t, p)
+            )
+            menu.addSeparator()
 
-        if is_assamese and main_win.spell_errors:
-            for err_start, err_end, suggestions in main_win.spell_errors:
-                if start == err_start and end == err_end:
-                    cursor.setPosition(start)
-                    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-                    self.setTextCursor(cursor)
+        # ---- 2) Spell-check section ----
+        if misspelled_word and misspelled_range:
+            cursor.setPosition(misspelled_range[0])
+            cursor.setPosition(misspelled_range[1], QTextCursor.MoveMode.KeepAnchor)
+            self.setTextCursor(cursor)
 
-                    menu = QMenu(self)
-                    menu_font = QFont()
-                    menu_font.setFamilies(CUSTOM_FONT_FAMILIES)
-                    editor_size = self.font().pointSize()
-                    menu_font.setPointSize(max(8, editor_size - 3))
-                    menu.setFont(menu_font)
+            all_suggestions = list(misspelled_suggestions) if misspelled_suggestions else []
+            user_matches = difflib.get_close_matches(
+                misspelled_word,
+                main_win.user_dictionary,
+                n=5,
+                cutoff=0.6,
+            )
+            for um in user_matches:
+                if um not in all_suggestions:
+                    all_suggestions.append(um)
+            all_suggestions = all_suggestions[:8]
 
-                    misspelled_word = text[start:end]
-                    all_suggestions = list(suggestions) if suggestions else []
-                    user_matches = difflib.get_close_matches(
-                        misspelled_word,
-                        main_win.user_dictionary,
-                        n=5,
-                        cutoff=0.6
+            if all_suggestions:
+                for sug in all_suggestions:
+                    act = menu.addAction(sug)
+                    act.triggered.connect(
+                        lambda checked=False, s=sug, c=QTextCursor(cursor):
+                            self.replace_word(c, s)
                     )
-                    for um in user_matches:
-                        if um not in all_suggestions:
-                            all_suggestions.append(um)
+            else:
+                menu.addAction("(no suggestions)").setEnabled(False)
 
-                    all_suggestions = all_suggestions[:8]
+            menu.addSeparator()
+            ignore_action = menu.addAction("Ignore")
+            ignore_action.triggered.connect(
+                lambda checked=False, s=misspelled_range[0], e=misspelled_range[1]:
+                    main_win.ignore_spelling_error(s, e)
+            )
+            add_dict_action = menu.addAction("Add to Dictionary")
+            add_dict_action.triggered.connect(
+                lambda checked=False, w=misspelled_word:
+                    main_win.add_to_user_dictionary(w)
+            )
+            menu.addSeparator()
 
-                    if all_suggestions:
-                        for sug in all_suggestions:
-                            action = menu.addAction(sug)
-                            action.triggered.connect(lambda checked, s=sug: self.replace_word(cursor, s))
-                    else:
-                        menu.addAction("(no suggestions)").setEnabled(False)
+        # ---- 3) Standard Cut / Copy / Paste / Select All etc. ----
+        std_menu = self.createStandardContextMenu()
+        for act in std_menu.actions():
+            if act.isSeparator():
+                continue
+            menu.addAction(act)
 
-                    menu.addSeparator()
-                    ignore_action = menu.addAction("Ignore")
-                    ignore_action.triggered.connect(
-                        lambda checked, s=start, e=end: main_win.ignore_spelling_error(s, e)
-                    )
-                    add_dict_action = menu.addAction("Add to Dictionary")
-                    add_dict_action.triggered.connect(
-                        lambda checked, word=misspelled_word: main_win.add_to_user_dictionary(word)
-                    )
-
-                    menu.exec(event.globalPos())
-                    return
-
-        super().contextMenuEvent(event)
+        menu.exec(event.globalPos())
 
     def replace_word(self, cursor, replacement):
         cursor.insertText(replacement)
         self.setTextCursor(cursor)
+
+    def _show_meaning_popup(self, text, global_pos):
+        """Fetch meaning via MeaningWorker and show it in a floating card."""
+
+        # Close any previously-open popup
+        if getattr(self, "_meaning_popup", None) is not None:
+            try:
+                self._meaning_popup.close()
+                self._meaning_popup.deleteLater()
+            except Exception:
+                pass
+            self._meaning_popup = None
+
+        # Show "Loading…" immediately so the user sees a response
+        loading = MeaningPopup("Loading…", parent=self.window())
+        loading.show_at(global_pos)
+        self._meaning_popup = loading
+
+        worker = MeaningWorker(text)
+
+        def _on_done(_word, meaning, popup_ref=loading, pos=global_pos):
+            # Ignore stale results from an earlier lookup
+            if getattr(self, "_meaning_popup", None) is not popup_ref:
+                return
+            try:
+                popup_ref.close()
+                popup_ref.deleteLater()
+            except Exception:
+                pass
+            result_text = meaning if meaning else "No translation found"
+            new_popup = MeaningPopup(result_text, parent=self.window())
+            new_popup.show_at(pos)
+            self._meaning_popup = new_popup
+
+        worker.meaning_fetched.connect(_on_done)
+
+        # Keep a reference so the thread isn't garbage-collected mid-flight
+        if not hasattr(self, "_meaning_workers"):
+            self._meaning_workers = []
+        self._meaning_workers.append(worker)
+
+        def _cleanup():
+            try:
+                self._meaning_workers.remove(worker)
+            except ValueError:
+                pass
+        worker.finished.connect(_cleanup)
+        worker.start()
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
