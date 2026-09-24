@@ -1280,11 +1280,12 @@ class PhoneticTextEdit(QPlainTextEdit):
             menu.addSeparator()
 
         # ---- 3) Standard Cut / Copy / Paste / Select All etc. ----
-        std_menu = self.createStandardContextMenu()
-        for act in std_menu.actions():
-            if act.isSeparator():
-                continue
-            menu.addAction(act)
+        if not (misspelled_word and misspelled_range):
+            std_menu = self.createStandardContextMenu()
+            for act in std_menu.actions():
+                if act.isSeparator():
+                    continue
+                menu.addAction(act)
 
         menu.exec(event.globalPos())
 
