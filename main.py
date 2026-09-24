@@ -1219,7 +1219,15 @@ class PhoneticTextEdit(QPlainTextEdit):
         menu = QMenu(self)
         menu_font = QFont()
         menu_font.setFamilies(CUSTOM_FONT_FAMILIES)
-        menu_font.setPointSize(10)
+        # When spell-check suggestions are going to appear, use a larger
+        # font (editor size − 3) so the suggestions are easy to read —
+        # this matches the earlier behaviour you liked.
+        # For a normal right-click, keep a compact, professional size.
+        if misspelled_word and misspelled_range:
+            editor_size = self.font().pointSize()
+            menu_font.setPointSize(max(10, editor_size - 3))
+        else:
+            menu_font.setPointSize(10)
         menu.setFont(menu_font)
 
         # ---- 1) Show meaning (always the FIRST item) ----
@@ -1233,10 +1241,9 @@ class PhoneticTextEdit(QPlainTextEdit):
 
         # ---- 2) Spell-check section ----
         if misspelled_word and misspelled_range:
-            cursor.setPosition(misspelled_range[0])
-            cursor.setPosition(misspelled_range[1], QTextCursor.MoveMode.KeepAnchor)
-            self.setTextCursor(cursor)
-
+            # NOTE: We deliberately do NOT select the misspelled word
+            # here. The selection is applied only when the user actually
+            # clicks a suggestion — same behaviour as MS Word.
             all_suggestions = list(misspelled_suggestions) if misspelled_suggestions else []
             user_matches = difflib.get_close_matches(
                 misspelled_word,
@@ -1253,8 +1260,8 @@ class PhoneticTextEdit(QPlainTextEdit):
                 for sug in all_suggestions:
                     act = menu.addAction(sug)
                     act.triggered.connect(
-                        lambda checked=False, s=sug, c=QTextCursor(cursor):
-                            self.replace_word(c, s)
+                        lambda checked=False, s=sug, rng=misspelled_range:
+                            self._replace_word_in_range(rng, s)
                     )
             else:
                 menu.addAction("(no suggestions)").setEnabled(False)
@@ -1282,6 +1289,14 @@ class PhoneticTextEdit(QPlainTextEdit):
         menu.exec(event.globalPos())
 
     def replace_word(self, cursor, replacement):
+        cursor.insertText(replacement)
+        self.setTextCursor(cursor)
+
+    def _replace_word_in_range(self, rng, replacement):
+        """Replace the given (start, end) character range with `replacement`."""
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(rng[0])
+        cursor.setPosition(rng[1], QTextCursor.MoveMode.KeepAnchor)
         cursor.insertText(replacement)
         self.setTextCursor(cursor)
 
